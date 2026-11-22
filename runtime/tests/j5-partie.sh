@@ -1,5 +1,5 @@
 #!/bin/sh
-# Lancement d'une partie (étape 2 de PROMPT-suite.md) : navigation scriptée jusqu'à « New Game », partie créée
+# Lancement d'une partie : navigation scriptée jusqu'à « New Game », partie créée
 # (journal du jeu « Start create game »), au moins un script .lua ouvert, puis au moins 300 images de jeu rendues
 # et une capture finale non uniforme, puis l'image bouge (captures espacées différentes) avec un déplacement au stick. Vidéos sautées (WAKFU_SKIP_VIDEOS) tant que le décodage vidéo manque (J5).
 # Usage : j5-partie.sh <wakfu> <image.bin> <xex patché> <jeu de base> <tu2> <données> [journal]

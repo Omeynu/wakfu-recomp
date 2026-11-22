@@ -1,13 +1,13 @@
 # Build Windows x64
 
 Chaîne validée : **Clang + MinGW-w64 + lld** (la même que la compilation croisée testée sous Wine
-sur la machine de test Linux). Sur le PC Windows, l'environnement le plus simple qui la fournit est MSYS2 « CLANG64 ».
+depuis Linux). Sur le PC Windows, l'environnement le plus simple qui la fournit est MSYS2 « CLANG64 ».
 
 ## 0. Installateur en un fichier (recommandé) : `WakfuRecomp.exe`
 
 Exécutable Windows x64 unique, à construire sous Linux (`packaging/windows/build-installer.sh <dossier>`,
 téléchargements épinglés et vérifiés par SHA-256 dans `packaging/windows/deps.lock`). Il ne contient aucun
-fichier du jeu ni C++ recompilé. Chez l'utilisateur :
+fichier du jeu ni C++ recompilé. Sur le PC du joueur :
 
 ```bat
 WakfuRecomp.exe                                                           (fenêtre du lanceur : double-clic)

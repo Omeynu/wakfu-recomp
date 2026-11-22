@@ -15,6 +15,8 @@ B=$(realpath -m "${1:?usage : build-installer.sh <dossier_de_construction> [<jeu
 GAME=${2:-}
 DL=$B/dl SRC=$B/src BLD=$B/bld DEPS=$B/deps STAGE=$B/stage LOG=$B/logs
 JOBS=$(nproc)
+# Chemins de la machine de construction retirés des binaires (__FILE__, débogage) : exe reproductible ailleurs
+export CFLAGS="-ffile-prefix-map=$B=build -ffile-prefix-map=$REPO=src" CXXFLAGS="-ffile-prefix-map=$B=build -ffile-prefix-map=$REPO=src"
 mkdir -p "$DL" "$SRC" "$BLD" "$DEPS" "$LOG"
 XENON_COMMIT=$(awk '$1 == "XenonRecomp" {print $3}' "$REPO/tools.lock")
 LLVM_TAG=20250114

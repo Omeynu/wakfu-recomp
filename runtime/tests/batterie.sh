@@ -1,6 +1,6 @@
 #!/bin/sh
 # Usage : [BUILD=<dossier de build>] [BATTERIE_DIR=<sorties>] flock /tmp/wakfu-jeu.lock runtime/tests/batterie.sh
-# Batterie de non-régression (PROMPT-fin) ; un résultat par ligne.
+# Batterie de non-régression ; un résultat par ligne.
 # RAPIDE=1 : j1, j4 (RADV), j5-partie, unitaires, options (≈ 30 min, avant chaque push).
 R=$(cd "$(dirname "$0")/../.." && pwd); W=$R/work; B=${BUILD:-$W/build-runtime}; T=$R/runtime/tests; S=${BATTERIE_DIR:-/tmp/wakfu-batterie}
 rm -rf $S; mkdir -p $S; cd $W

@@ -1,65 +1,103 @@
 # wakfu-recomp
 
-Préparation de la recompilation statique d'*Islands of Wakfu* (XBLA 584109AA, Xbox 360) vers PC,
-à partir de la copie personnelle du jeu, avec XenonRecomp / XenosRecomp. Le runtime (rendu,
-audio, entrées, noyau HLE) est hors périmètre : voir `docs/rapport.md`.
+A static recompilation of **Islands of Wakfu** (Xbox Live Arcade, Xbox 360, title ID `584109AA`) to native
+PC code. The game's PowerPC code is translated to C++ with a patched
+[XenonRecomp](https://github.com/hedge-dev/XenonRecomp), then linked against a hand-written runtime that
+emulates the Xbox 360 kernel, GPU (Vulkan), audio (XMA) and input (SDL2).
 
-**Dépôt privé** : il ne contient jamais les fichiers du jeu ni le C++ généré (œuvre dérivée).
-Le C++ généré est publié en archive à part (non inclus ici).
+> **No game files are included or distributed.** You need your own copy of the game (XBLA package) and its
+> title update 2. Everything game-specific, including the recompiled C++, is generated on your machine.
 
-## Contenu
+This project is not affiliated with Ankama or Microsoft.
 
-| Chemin | Rôle |
-|---|---|
-| `PROMPT.md` | Prompt d'origine (étapes 0 à 9) |
-| `docs/rapport.md` | État de chaque étape, imports à émuler, travail restant |
-| `docs/analyse.md` | Analyse du XEX patché (en-têtes, XDK, imports, arborescence) |
-| `docs/methode.md` | Méthode et vérifications de chaque élément de la config |
-| `config/wakfu.toml` | Config XenonRecomp |
-| `config/jump_tables.toml` | Tables de sauts (générées) ; `switches_manual.toml` : cas relus à la main |
-| `patches/xenonrecomp-wakfu.patch` | 52 instructions ajoutées à XenonRecomp |
-| `scripts/` | Extraction STFS, analyse XEX, fonctions d'aide, tables de sauts |
-| `tools-src/xexdump/` | Applique la TU, vide l'image du XEX (lié à XenonUtils) |
-| `tools-src/wakfu-prepare/` | Prépare le jeu : STFS / ISO-XISO / dossier → base, tu2, patched (tests : `ctest`) |
-| `tools-src/wakfu-installer/`, `packaging/windows/` | Installateur Windows en un fichier `WakfuRecomp.exe` (docs/build-windows.md §0) |
-| `tests/insn/` | Test différentiel des instructions ajoutées (QEMU vs C++ recompilé) |
-| `check/` | Vérification de compilation et d'édition de liens du C++ généré |
-| `tools.lock` | Commits épinglés des outils |
+## Status
 
-## Reproduire (Linux, Clang ≥ 18)
+Early, but playable:
+
+- Boots, plays the intro videos, reaches the menus and starts a new game; the first zone is playable.
+- Save games and profile settings are written and read back.
+- Controller (SDL2, with rumble) and keyboard; XMA audio; window, borderless and fullscreen modes;
+  optional AMD FSR 1 upscaling.
+- Windows x64 (main target) and Linux.
+- Frame rate: about 30–55 fps in game on a Radeon RX 6700 XT. Below 60 fps the game runs in slow motion
+  (fixed 1/60 s step per frame).
+
+Known gaps and details: [`docs/etat.md`](docs/etat.md).
+
+## Playing on Windows
+
+1. Download `WakfuRecomp.exe` from the [Releases](https://github.com/Omeynu/wakfu-recomp/releases) page. It contains the build tools and the
+   runtime sources only (no game data); Windows SmartScreen will warn because the file is not signed.
+2. Run it and give it your copy of the game and of title update 2 (STFS package, ISO/XISO image or extracted
+   folder; drag and drop works). Files are checked by content and SHA-1; an unknown version is refused.
+3. It recompiles the game locally (a few minutes to an hour, ~1.5 GB of disk) and then shows a **Play** button.
+
+Settings live in `%APPDATA%\WakfuRecomp\config.toml` (also editable from the launcher).
+Bug reports: open an issue with `journal.txt`, a screenshot and what you were doing — see
+[`docs/tester-sur-pc.md`](docs/tester-sur-pc.md).
+
+## Building from source
+
+- Windows installer (built on Linux, pinned and SHA-256-checked downloads):
+  `packaging/windows/build-installer.sh <build dir>` — see [`docs/build-windows.md`](docs/build-windows.md).
+- Linux, step by step (Clang ≥ 18, CMake, Ninja, Python 3):
 
 ```sh
-# Espace de travail hors du dépôt ; `work` est un lien ignoré par Git
-mkdir -p ~/wakfu-recomp && ln -s ~/wakfu-recomp work
-apt-get install clang lld cmake ninja-build git python3 binutils-powerpc64-linux-gnu qemu-user zstd
+mkdir -p ~/wakfu-work && ln -s ~/wakfu-work work           # outside the repo; `work` is git-ignored
 
-# Outils aux commits de tools.lock, patch appliqué
+# XenonRecomp at the commit pinned in tools.lock, with this project's patch
 git clone --recursive https://github.com/hedge-dev/XenonRecomp work/tools/XenonRecomp
-git -C work/tools/XenonRecomp checkout <commit de tools.lock>
+git -C work/tools/XenonRecomp checkout <commit from tools.lock>
 git -C work/tools/XenonRecomp apply "$PWD/patches/xenonrecomp-wakfu.patch"
 CC=clang CXX=clang++ cmake -S work/tools/XenonRecomp -B work/tools/XenonRecomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C work/tools/XenonRecomp/build
 
-# Jeu (copie personnelle) : paquets STFS (jeu + TU 2) dans work/game/raw/, ou image ISO/XISO,
-# ou dossier extrait. wakfu-prepare (tools-src/wakfu-prepare) détecte le format, extrait, applique
-# la TU et écrit work/game/{base,tu2,patched/{default.xex,image.bin,patched.txt}}.
+# Prepare the game: extracts STFS/ISO/folder, applies the title update
 CC=clang CXX=clang++ cmake -S tools-src/wakfu-prepare -B work/build-prepare -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DXENONRECOMP_DIR=$PWD/work/tools/XenonRecomp && ninja -C work/build-prepare
-work/build-prepare/wakfu-prepare -o work/game work/game/raw
-# (équivalent manuel : scripts/stfs_extract.py pour base/ et tu2/, puis tools-src/xexdump
-#  <base/default.xex> <patched/image.bin> <tu2/default.xexp> <patched/default.xex> > patched/patched.txt)
+work/build-prepare/wakfu-prepare -o work/game <your game files>
 
-# Tables de sauts
-python3 -I scripts/find_switches.py work/game/patched/image.bin work/game/patched/patched.txt \
-    config/switches_manual.toml config/jump_tables.toml
-
-# Génération : VIDER work/out/ppc avant (XenonRecomp ne supprime pas les anciens fichiers)
+# Generate the C++ (empty work/out/ppc first: XenonRecomp does not delete stale files)
 work/tools/XenonRecomp/build/XenonRecomp/XenonRecomp config/wakfu.toml work/tools/XenonRecomp/XenonUtils/ppc_context.h
 
-# Vérifications (S = work/tools/XenonRecomp)
-python3 -I tests/insn/run_tests.py $S/build/XenonRecomp/XenonRecomp $S/XenonUtils $S/thirdparty/simde work/tests-insn
-CXX=clang++ cmake -S check -B work/build-check -G Ninja -DPPC_DIR=$PWD/work/out/ppc -DSIMDE_DIR=$PWD/$S/thirdparty/simde
-ninja -C work/build-check
-SIMDE_DIR=$PWD/$S/thirdparty/simde python3 -I check/link_check.py work/build-check/libwakfu_ppc.a \
-    work/game/patched/patched.txt work/out/ppc work/link-check
+# Kernel import stubs, then the runtime (S = work/tools/XenonRecomp)
+S=$PWD/work/tools/XenonRecomp
+python3 -I runtime/tools/gen_imports.py work/game/patched/default.xex work/game/patched/patched.txt $S/XenonUtils/xbox work/gen
+CC=clang CXX=clang++ cmake -S runtime -B work/build-runtime -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DPPC_DIR=$PWD/work/out/ppc -DSIMDE_DIR=$S/thirdparty/simde -DGEN_DIR=$PWD/work/gen
+cmake --build work/build-runtime --target wakfu
 ```
+
+On Arch-based distributions, `packaging/linux/build-paquet.sh` produces a package whose `installer.sh` does all
+of the above (see `packaging/linux/LISEZMOI.txt`).
+
+Details of each step and how it was verified: [`docs/methode.md`](docs/methode.md).
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `runtime/` | The runtime: kernel/XAM emulation, PM4 command processor, Vulkan renderer, audio, input, tests |
+| `config/` | XenonRecomp configuration and jump tables (`switches_manual.toml`: hand-checked cases) |
+| `patches/xenonrecomp-wakfu.patch` | Instructions and fixes added to XenonRecomp for this game |
+| `tools-src/wakfu-prepare/` | Game preparation: STFS / ISO-XISO / folder → base, title update, patched XEX |
+| `tools-src/wakfu-installer/`, `packaging/` | Windows one-file installer and launcher; Linux package |
+| `scripts/` | Analysis helpers: STFS extraction, XEX analysis, jump tables, helper functions |
+| `tests/insn/` | Differential test of the added instructions (QEMU vs recompiled C++) |
+| `check/` | Compile and link check of the generated C++ |
+| `tools.lock` | Pinned tool commits |
+
+Documentation in `docs/` is written in French.
+
+## Credits
+
+- [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) (MIT) — PowerPC to C++ recompiler.
+- [Xenia](https://github.com/xenia-project/xenia) (BSD) — shader microcode analysis files in `runtime/third_party/xenia`.
+- [UnleashedRecomp](https://github.com/hedge-dev/UnleashedRecomp) — architecture reference (no code copied).
+- AMD FidelityFX FSR 1 (MIT), SDL2, FFmpeg (LGPL, XMA2 decoder only), glslang, Dear ImGui, toml++, zstd,
+  llvm-mingw — see `packaging/windows/LICENCES-TIERS.txt`.
+
+## License
+
+The code in this repository is under the [MIT license](LICENSE), except `runtime/third_party/`, which keeps
+its own licenses. Islands of Wakfu and its assets belong to their respective owners.

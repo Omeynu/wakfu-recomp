@@ -1,6 +1,6 @@
 # Provenance des dépendances
 
-Vérifiée le 2026-11-17 (règle de PROMPT-fin) : dépôt officiel public (propriétaire attendu, pas un fork ni un compte
+Vérifiée le 2026-11-17 : dépôt officiel public (propriétaire attendu, pas un fork ni un compte
 homonyme), adoption (étoiles GitHub), activité (dernier envoi), version publiée depuis plus de deux semaines,
 intégrité (somme ou signature). Métadonnées lues par l'API publique de GitHub.
 
