@@ -1,0 +1,243 @@
+# Config XenonRecomp — Islands of Wakfu (XBLA 584109AA) + Title Update #2.
+# Chemins relatifs à ce fichier ; `work` (racine du dépôt) est un lien ignoré par Git vers
+# l'espace de travail (voir README). Les fichiers du jeu ne sont jamais dans le dépôt.
+# Méthode et vérifications : docs/methode.md. Optimisations : docs/methode.md §10.
+
+[main]
+file_path = "../work/game/base/default.xex"
+patch_file_path = "../work/game/tu2/default.xexp"
+patched_file_path = "../work/game/patched/default.xex"
+out_directory_path = "../work/out/ppc"
+switch_table_file_path = "jump_tables.toml"   # généré par scripts/find_switches.py (+ switches_manual.toml)
+
+# Optimisations (comme UnleashedRecomp) DÉSACTIVÉES le 18/11 : l'une d'elles fausse le décodeur vidéo du jeu (écran-titre
+# en blocs depuis fe08cb5, j4 contrôle désormais ces blocs) et aucune n'apporte de cadence mesurable (vblank, jeu ≈ 3,6
+# ms/image). Pour les réactiver : chercher l'option fautive une à une (docs/methode.md §10).
+skip_lr = false                 # LR jamais lu comme donnée (1 blrl : cible prise au mtlr, patch)
+skip_msr = false                # les 189 mfmsr ne servent qu'au mtmsrd suivant
+ctr_as_local = false
+xer_as_local = false
+reserved_as_local = false
+cr_as_local = false
+non_argument_as_local = false   # r0 r2 r11 r12 f0 v32-v63
+non_volatile_as_local = false   # r14-r31 f14-f31 v14-v31 v64-v127 ; setjmp : MSVC recharge après
+
+# Funclets __finally de MSVC (lisent r12 et les registres non volatils de leur parent) et leurs
+# appelants : registres gardés dans ctx, sinon RtlLeaveCriticalSection(0) et interblocage.
+# Liste produite par scripts/find_context_functions.py (docs/methode.md §10).
+registers_in_context = [
+    0x82114608,
+    0x82135370,
+    0x82149B10,
+    0x8214B468,
+    0x821A3820,
+    0x821A3BB0,
+    0x821A6710,
+    0x821A6F90,
+    0x821A6FB8,
+    0x821A7008,
+    0x821A7284,
+    0x821A72AC,
+    0x821A7300,
+    0x821A7B48,
+    0x821A7B68,
+    0x821EA568,
+    0x82213BF0,
+    0x82218F98,
+    0x822239F8,
+    0x82247B30,
+    0x82272D90,
+    0x82272DD8,
+    0x8227D6AC,
+    0x8227D750,
+    0x8227D98C,
+    0x8227D9B4,
+    0x8227DAE4,
+    0x823034F0,
+    0x823180B0,
+    0x823D9768,
+    0x823D9C68,
+    0x823D9DC4,
+    0x823D9DE4,
+    0x823D9E28,
+    0x823D9FD8,
+    0x823D9FF8,
+    0x823DA1E0,
+    0x823DA254,
+    0x823DA274,
+    0x823DA3C8,
+    0x823DA510,
+    0x823DA53C,
+    0x823DA5A8,
+    0x823DA644,
+    0x823DA664,
+    0x823DA6B0,
+    0x823DA7F0,
+    0x823DAA90,
+    0x823DAB24,
+    0x823DAB44,
+    0x823DACD8,
+    0x823DAD6C,
+    0x823DAD8C,
+    0x823DAEC0,
+    0x823DAF64,
+    0x823DAF84,
+    0x823DC248,
+    0x823DC34C,
+    0x823DC36C,
+    0x823DC4F8,
+    0x823DC58C,
+    0x823DC5AC,
+    0x823DC810,
+    0x823DC894,
+    0x823DC8B4,
+    0x823DCB88,
+    0x823DCC3C,
+    0x823DCC5C,
+    0x823DD720,
+    0x823DD834,
+    0x823DD9A0,
+    0x823DDB30,
+    0x823DF4E8,
+    0x823DF660,
+    0x823DF680,
+    0x823DFA48,
+    0x823DFBAC,
+    0x823DFBCC,
+    0x823DFC70,
+    0x823E0ED4,
+    0x823E0FC8,
+    0x823E1264,
+    0x823E1284,
+    0x823E1AA0,
+    0x823E48B0,
+    0x823E4B38,
+    0x823E4B58,
+    0x823E4F98,
+    0x823E50A8,
+    0x823E55F8,
+    0x823E571C,
+    0x823E573C,
+    0x823E5780,
+    0x823E5898,
+    0x823E58B8,
+    0x823E5CB0,
+    0x823E5D34,
+    0x823E5D54,
+    0x823E5E60,
+    0x823E5F88,
+    0x823E5FA8,
+    0x823E60C8,
+    0x823E61D0,
+    0x823E61F0,
+    0x823E9238,
+    0x823E935C,
+    0x823E937C,
+    0x823E99D8,
+    0x823E9B28,
+    0x823E9B48,
+    0x823EB7E8,
+    0x823EB8E8,
+    0x823EB914,
+    0x823EBF30,
+    0x823EC00C,
+    0x823EC02C,
+    0x823EC700,
+    0x823EF170,
+    0x823EF238,
+    0x823EF2A0,
+    0x823EF4DC,
+    0x823F6360,
+    0x823FE528,
+    0x824AA218,
+    0x824AA7F8,
+    0x824AA9E0,
+    0x824D03B0,
+    0x824D48D0,
+    0x824D7680,
+    0x824E5E28,
+    0x824ED010,
+    0x824EED98,
+    0x825134B8,
+    0x8251F4F0,
+    0x82525698,
+    0x82527EA0,
+    0x825285B0,
+    0x8252A198,
+    0x82533AA8,
+    0x82538050,
+    0x8253ED48,
+    0x82543758,
+    0x8254E7B0,
+    0x82551D70,
+    0x82551E48,
+    0x82552C40,
+    0x82553270,
+    0x8255CAC0,
+    0x8255D390,
+    0x825606C8,
+    0x82561308,
+    0x82586A30,
+    0x82587220,
+    0x825AA568,
+    0x825B2A40,
+    0x825C4780,
+    0x825C8978,
+    0x825CBA38,
+    0x825D0130,
+    0x825D4E38,
+    0x825D85B0,
+    0x825DA3B0,
+    0x825DD328,
+    0x825E44B8,
+    0x825E5440,
+    0x825E7500,
+    0x825E78A0,
+]
+
+# Fonctions d'aide du compilateur — trouvées et vérifiées par scripts/find_helpers.py
+savegprlr_14_address = 0x823D88E0
+restgprlr_14_address = 0x823D8930
+savefpr_14_address = 0x823D8990
+restfpr_14_address = 0x823D89DC
+savevmx_14_address = 0x823D8A30
+restvmx_14_address = 0x823D8CC8
+savevmx_64_address = 0x823D8AC4
+restvmx_64_address = 0x823D8D5C
+
+# Utilisés par Lua 5.1 (compilé en C) : 8 appels à setjmp, 19 à longjmp
+setjmp_address = 0x823DF6C0
+longjmp_address = 0x823DFC70
+
+# Fonctions feuilles absentes de .pdata qui contiennent une table de sauts : sans cela l'analyse
+# les coupe au bctr. Bornes calculées par scripts/find_switches.py (lignes FONCTION), relues.
+functions = [
+    { address = 0x82148D40, size = 0x2E4 },
+    { address = 0x82162E60, size = 0x110 },
+    { address = 0x821E9020, size = 0x108 },
+    { address = 0x8225AF48, size = 0x188 },
+    { address = 0x8225B0D0, size = 0x20 },   # fonction collée à sub_8225AF48 (appelée par pointeur)
+    { address = 0x8225FD38, size = 0x18C },
+    { address = 0x822F3430, size = 0x124 },
+    { address = 0x822F3688, size = 0xD0 },
+    { address = 0x82329A08, size = 0xE0 },
+    { address = 0x823FE1A0, size = 0x224 },
+    { address = 0x82470188, size = 0x110 },
+    { address = 0x824BC460, size = 0x80 },
+    { address = 0x824BC4E0, size = 0x48 },  # comparateur (qsort) appelé indirectement par le compilateur HLSL
+    { address = 0x825AAB18, size = 0x68 },
+    { address = 0x825AAB80, size = 0x64 },
+    { address = 0x825AABE8, size = 0x5C },
+    { address = 0x825AAC48, size = 0x198 },
+    { address = 0x825AADE0, size = 0x16C },
+    # « switch » en chaîne de bdzf (index dans CTR) : l'analyse coupait la fonction en 0x822F38F4.
+    # Bornes : suivi des cibles de branchement jusqu'au dernier blr (puis bourrage en 0x822F39B4).
+    { address = 0x822F3758, size = 0x25C },
+]
+
+invalid_instructions = [
+    { data = 0x00000000, size = 4 },   # bourrage entre fonctions
+    { data = 0x82626DDC, size = 8 },   # __C_specific_handler + table de portée (73 fonctions)
+    { data = 0x823E1970, size = 8 },   # gestionnaire C++ (__CxxFrameHandler) + FuncInfo (6 fonctions)
+    { data = 0x823F15E0, size = 8 },   # autre gestionnaire de trame (1 fonction)
+]

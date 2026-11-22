@@ -1,0 +1,10 @@
+# Fichiers du jeu et sorties générées : jamais dans Git
+game/
+out/
+*.xex
+*.xexp
+*.iso
+*.tar.zst
+build/
+work
+__pycache__/

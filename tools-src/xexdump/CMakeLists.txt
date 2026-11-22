@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.20)
+project(xexdump CXX C)
+set(XENONRECOMP_DIR "" CACHE PATH "Racine du clone XenonRecomp")
+add_subdirectory(${XENONRECOMP_DIR} xenonrecomp EXCLUDE_FROM_ALL)
+add_executable(xexdump xexdump.cpp xexcore.cpp)
+target_link_libraries(xexdump PRIVATE XenonUtils)

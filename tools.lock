@@ -1,0 +1,8 @@
+# Commits épinglés des outils (clonés le 2026-11-14)
+XenonRecomp     https://github.com/hedge-dev/XenonRecomp     ddd128bcca99fe8bfbb99bea583c972351fa6ace
+XenosRecomp     https://github.com/hedge-dev/XenosRecomp     70a084c2392378818a4da4086e8e3420b4c3ea8d
+UnleashedRecomp https://github.com/hedge-dev/UnleashedRecomp cf829a9eca8fb680fba4b0409ddeb6ca92f22e3c  # référence seulement
+# Compilateur : Debian clang version 19.1.7 (3+b1) ; cmake version 3.31.6
+# Patch local appliqué à XenonRecomp : patches/xenonrecomp-wakfu.patch (52 instructions, bdnzf généralisé)
+# Tests : GNU assembler (GNU Binutils for Debian) 2.44 ; qemu-ppc version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)
+Xenia (référence GPU, lecture seule) https://github.com/xenia-project/xenia 95a5c3ee250f80c3b9d139658649d9ffb6db3eec  # src/xenia/gpu seulement

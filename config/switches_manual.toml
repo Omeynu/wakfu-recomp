@@ -1,0 +1,46 @@
+# Tables de sauts relues à la main (garde éloignée, sur une copie du registre, ou absente).
+# bctr = adresse du bctr ; start = début de la ligne droite émulée ; r = registre d'index ;
+# count = nombre d'entrées (garde cmplwi N -> N+1). Méthode : docs/methode.md.
+
+[[switch]]  # r17 = lwz 0(r29) en 0x8219E7C8, garde cmplwi cr6,r17,28 en 0x8219E7D4
+bctr = 0x8219E914
+start = 0x8219E900
+r = 17
+count = 29
+
+[[switch]]  # mr r31,r4 puis garde cmplwi cr6,r4,18 sur la copie
+bctr = 0x821C44C0
+start = 0x821C449C
+r = 31
+count = 19
+
+[[switch]]  # fonction feuille sans .pdata (0x8225FD38) ; index clrlwi r11,r4,16 sans garde ;
+            # table intégrée au code 0x8225FD54-0x8225FDA8 (22 mots, jusqu'au premier cas)
+bctr = 0x8225FD50
+start = 0x8225FD3C
+r = 11
+count = 22
+
+[[switch]]  # r18 = r6-11 en 0x82360E24, garde cmplwi cr6,r18,20 en 0x82360E30
+bctr = 0x82361138
+start = 0x82361124
+r = 18
+count = 21
+
+[[switch]]  # r9 = lbz 4(r30) en 0x8242803C, garde cmplwi cr6,r9,14 en 0x82428044
+bctr = 0x824280CC
+start = 0x824280A8
+r = 9
+count = 15
+
+[[switch]]  # r29 = rlwinm r11,20,28,31 (4 bits) en 0x824C3438, garde cmplwi cr6,r29,15
+bctr = 0x824C3774
+start = 0x824C3750
+r = 29
+count = 16
+
+[[switch]]  # garde cmplwi cr6,r11,34 + ble vers la table
+bctr = 0x82553B30
+start = 0x82553B0C
+r = 11
+count = 35
