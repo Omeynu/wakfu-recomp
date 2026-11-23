@@ -282,7 +282,9 @@ WK_IMPORT(RtlLeaveCriticalSection) {
     St32(cs + 0x10, Ld32(cs + 0x10) - 1);
     const uint32_t rec = Ld32(cs + 0x14) - 1;
     St32(cs + 0x14, rec);
-    if (rec == 0) { St32(cs + 0x18, 0); g_kernelCv.notify_all(); }
+    // réveil seulement s'il y a un attendant (LockCount >= 0 après décrément) : sinon chaque sortie réveillait tous les
+    // fils en attente noyau (≈ +7 ms de travail du jeu une image sur 12, rafales d'allocations sous section critique)
+    if (rec == 0) { St32(cs + 0x18, 0); if (int32_t(Ld32(cs + 0x10)) >= 0) g_kernelCv.notify_all(); }
 }
 // Verrou tournant : mot invité = propriétaire (KTHREAD) ou 0.
 static void SpinAcquire(uint32_t lockAddr) {

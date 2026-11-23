@@ -111,6 +111,7 @@ exactement les imports du XEX ; puis lien avec stubs vides → doit réussir.
 
 Les `.xpu`/`.xvu` de `Media/Shaders` sont des conteneurs D3D Xenos (drapeaux `0x102A1100` pixel,
 `0x102A1101` vertex) : XenosRecomp en mode fichier (HLSL) puis dossier (DXC → SPIR-V).
+XenosRecomp non modifié : les 64 VS qu'il ne traduit pas utilisent memexport (cf. `natif-b3-shaders.md`).
 
 ## 10. Optimisations XenonRecomp (`config/wakfu.toml`)
 

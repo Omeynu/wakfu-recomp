@@ -11,10 +11,11 @@ enum ExitCode : int {
     kExitMemory = 4,      // réservation des 4 Go de mémoire invitée impossible
     kExitGameError = 5,   // erreur fatale signalée par le jeu (KeBugCheck)
     kExitCrash = 6,       // plantage (exception du processeur hôte)
+    kExitRender = 7,      // rendu natif impossible (GPU, Vulkan ou shaders précompilés) : message au joueur
 };
 
-// Écrit la ligne de sortie, enregistre le cache de pipelines si `saveCaches` (jamais après un plantage), vide les
-// journaux et termine le processus sans destructeurs statiques (threads du jeu encore actifs).
-[[noreturn]] void Quit(int code, const char* reason, bool saveCaches = true);
+// Écrit la ligne de sortie, vide les journaux et termine le processus sans destructeurs statiques (threads du jeu
+// encore actifs).
+[[noreturn]] void Quit(int code, const char* reason);
 
 }  // namespace wk

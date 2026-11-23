@@ -2,6 +2,7 @@
 # Sommes : condensé publié par GitHub (SDL), fichier SHA-256 amont (CMake, zstd), sinon relevée au premier
 # téléchargement le 2026-11-16 (llvm-mingw, ninja, FFmpeg, archives de tags glslang / Vulkan-Headers) ou le
 # 2026-11-17 (archive du tag Dear ImGui, Inter : aucun condensé publié).
+# DXC officiel (microsoft/DirectXShaderCompiler v1.9.2609, 2026-09-29) : condensé publié par GitHub (paquet natif).
 # llvm-mingw 20250114 = LLVM 19.1.7, même version que le Clang Linux avec lequel le runtime est validé.
 llvm-mingw-20250114-ucrt-ubuntu-20.04-x86_64.tar.xz a16f52dee819797248e6c7d63b8b1e50a92119f45767ecd8e9633d1733b896e2 https://github.com/mstorsjo/llvm-mingw/releases/download/20250114/llvm-mingw-20250114-ucrt-ubuntu-20.04-x86_64.tar.xz
 llvm-mingw-20250114-ucrt-x86_64.zip 9395d95c089611e6cd728c9a07219ffc5ac706e0c719833a2f7e64a706a81541 https://github.com/mstorsjo/llvm-mingw/releases/download/20250114/llvm-mingw-20250114-ucrt-x86_64.zip
@@ -15,3 +16,4 @@ Vulkan-Headers-1.4.309.tar.gz 437925ada160d86ed763d29dcb9318c1bb0d024d7deaf77bc7
 ninja-1.12.1-COPYING eb7e9ab9690124c5c9f42bdc81383d886a3dede26345b6ed15bbad7caf81f7ea https://raw.githubusercontent.com/ninja-build/ninja/v1.12.1/COPYING
 imgui-1.93.0.tar.gz f7bf6bc76e5d79d40d751096663e6c5d18daf08129dd52e7f7b09e4251c8eeee https://github.com/ocornut/imgui/archive/refs/tags/v1.93.0.tar.gz
 Inter-4.1.zip 9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+dxc_2026_09_29.zip ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1 https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip

@@ -1,14 +1,15 @@
-// Présentation (voir present.h) : RGBA -> tampon de transfert -> image source -> étirement (blit)
+// Présentation (voir present.h) : image native -> image source (blit) -> post-traitement / FSR -> étirement (blit)
 // vers l'image de la chaîne d'échange, une image en vol.
 #include "../config.h"
 #include "present.h"
-#include "glsl_translator.h"
-#include "texture_decode.h"
 #include "fsr1.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include <glslang/Public/ResourceLimits.h>
+#include <glslang/Public/ShaderLang.h>
+#include <glslang/SPIRV/GlslangToSpv.h>
 
 namespace wk::gpu {
 
@@ -37,10 +38,6 @@ struct State {
     VkFence fence = VK_NULL_HANDLE;
     bool inFlight = false, stale = true;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
-    VkBuffer staging = VK_NULL_HANDLE;
-    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-    uint8_t* stagingMap = nullptr;
-    VkDeviceSize stagingSize = 0;
     vk::Image source;
     // Post-traitement (options [post]) : FXAA puis netteté / couleur, calculs GPU, image affichée seulement
     bool postTried = false, postOk = false;
@@ -60,11 +57,33 @@ struct State {
     VkDescriptorSet fsrSets[2] = {};
     VkSampler fsrSampler = VK_NULL_HANDLE;
     vk::Image fsr[2];
-    VkDescriptorPool decodePool = VK_NULL_HANDLE;   // un jeu par image (tampon d'image décodé sur GPU)
-    VkDescriptorSet decodeSet = VK_NULL_HANDLE;
-    bool decodeTried = false;
 };
 State* g = nullptr;
+
+// GLSL (calcul) -> SPIR-V (glslang)
+bool CompileGlsl(const char* source, std::vector<uint32_t>* spirv, std::string* log) {
+    // Statique locale (initialisation thread-safe) plutôt que std::call_once : sous MinGW, Clang (TLS natif) ne
+    // trouve pas __once_call du libstdc++ de GCC (TLS émulé).
+    static const bool initialized = glslang::InitializeProcess();
+    (void)initialized;
+    glslang::TShader shader(EShLangCompute);
+    shader.setStrings(&source, 1);
+    shader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientVulkan, 100);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_6);
+    if (!shader.parse(GetDefaultResources(), 450, false, EShMsgDefault)) {
+        if (log) *log = shader.getInfoLog();
+        return false;
+    }
+    glslang::TProgram program;
+    program.addShader(&shader);
+    if (!program.link(EShMsgDefault)) {
+        if (log) *log = program.getInfoLog();
+        return false;
+    }
+    glslang::GlslangToSpv(*program.getIntermediate(EShLangCompute), *spirv);
+    return true;
+}
 
 // Passe 0 : FXAA (version « console » de T. Lottes). Passe 1 : netteté AMD CAS, correction couleur Xbox (courbe
 // PWL du Xenos -> linéaire -> sRGB, approximation), luminosité, gamma.
@@ -128,7 +147,7 @@ bool EnsurePost(uint32_t w, uint32_t h) {
         g->postTried = true;
         std::vector<uint32_t> spv;
         std::string log;
-        if (!CompileGlsl(2, kPostGlsl, &spv, &log)) { fprintf(stderr, "[fenetre] post-traitement indisponible : %s\n", log.c_str()); return false; }
+        if (!CompileGlsl(kPostGlsl, &spv, &log)) { fprintf(stderr, "[fenetre] post-traitement indisponible : %s\n", log.c_str()); return false; }
         VkDescriptorSetLayoutBinding b[2] = {};
         b[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
         b[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
@@ -227,7 +246,7 @@ bool EnsureFsr(uint32_t outW, uint32_t outH) {
         for (int i = 0; i < 2 && ok; i++) {
             std::vector<uint32_t> spv;
             std::string log;
-            if (!CompileGlsl(2, Fsr1Glsl(i == 0).c_str(), &spv, &log)) {
+            if (!CompileGlsl(Fsr1Glsl(i == 0).c_str(), &spv, &log)) {
                 fprintf(stderr, "[fenetre] FSR 1 indisponible : %s\n", log.substr(0, 300).c_str());
                 ok = false;
                 break;
@@ -293,7 +312,7 @@ void DestroySwapchain() {
 bool CreateSwapchain(uint32_t w, uint32_t h) {
     VkDevice dev = g->ctx->device;
     VkPhysicalDevice phys = g->ctx->physical;
-    vkDeviceWaitIdle(dev);   // l'ancienne chaîne n'est plus utilisée (présentations comprises)
+    { std::lock_guard<std::mutex> l(g->ctx->queueLock); vkDeviceWaitIdle(dev); }   // l'ancienne chaîne n'est plus utilisée (présentations comprises)
     DestroySwapchain();
     VkSurfaceCapabilitiesKHR caps;
     if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys, g->surface, &caps) != VK_SUCCESS) return false;
@@ -370,40 +389,12 @@ bool CreateSwapchain(uint32_t w, uint32_t h) {
     return true;
 }
 
-// Tampon de transfert et image source à la taille de l'image du jeu (après WaitFrame : plus utilisés)
-bool g_sourceStorage = false;   // image source utilisable en écriture par le calcul de décodage
+// Image source à la taille de l'image du jeu (après WaitFrame : plus utilisée)
 bool EnsureSource(uint32_t w, uint32_t h) {
     vk::Context& c = *g->ctx;
-    const VkDeviceSize size = VkDeviceSize(w) * h * 4;
-    if (size > g->stagingSize) {
-        if (g->staging) { vkDestroyBuffer(c.device, g->staging, nullptr); vkFreeMemory(c.device, g->stagingMemory, nullptr); }
-        g->staging = VK_NULL_HANDLE;
-        g->stagingSize = 0;
-        VkBufferCreateInfo bci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        bci.size = size;
-        bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-        if (vkCreateBuffer(c.device, &bci, nullptr, &g->staging) != VK_SUCCESS) return false;
-        VkMemoryRequirements req;
-        vkGetBufferMemoryRequirements(c.device, g->staging, &req);
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = c.FindMemory(req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        if (ai.memoryTypeIndex == UINT32_MAX || vkAllocateMemory(c.device, &ai, nullptr, &g->stagingMemory) != VK_SUCCESS) {
-            vkDestroyBuffer(c.device, g->staging, nullptr);
-            g->staging = VK_NULL_HANDLE;
-            return false;
-        }
-        vkBindBufferMemory(c.device, g->staging, g->stagingMemory, 0);
-        void* p = nullptr;
-        vkMapMemory(c.device, g->stagingMemory, 0, size, 0, &p);
-        g->stagingMap = static_cast<uint8_t*>(p);
-        g->stagingSize = size;
-    }
     if (g->source.width != w || g->source.height != h) {
         if (g->source.image) c.DestroyImage(g->source);
-        if (!c.CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                               (g_sourceStorage ? VK_IMAGE_USAGE_STORAGE_BIT : 0),
-                           &g->source))   // échantillonnage : la vue créée par CreateImage l'exige
+        if (!c.CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &g->source))   // échantillonnage : la vue créée par CreateImage l'exige
             return false;
     }
     return true;
@@ -441,17 +432,11 @@ bool PresentInit(vk::Context* ctx, VkSurfaceKHR surface, std::string* error) {
 
 void PresentResize() { if (g) g->stale = true; }
 
-VkDescriptorSetLayout RendererDecodeSetLayout();
-bool RendererRecordDecode(VkCommandBuffer cmd, VkDescriptorSet set, const TextureInfo& t, VkImageView dst);
-bool RendererCanDecodeFrame(const TextureInfo& t);
-
-// Source de l'image : RGBA sur CPU (rgba) ou tampon d'image décodé sur GPU (gpuSource).
-void PresentImpl(const uint8_t* rgba, const TextureInfo* gpuSource, uint32_t w, uint32_t h, uint32_t drawableW, uint32_t drawableH) {
+void PresentFrameImage(VkImage native, uint32_t w, uint32_t h, uint32_t drawableW, uint32_t drawableH) {
     if (!g || !w || !h) return;
     WaitFrame();
     if ((g->stale || !g->swapchain) && !CreateSwapchain(drawableW, drawableH)) return;
     if (!EnsureSource(w, h)) { fprintf(stderr, "[fenetre] allocation de l'image source impossible\n"); return; }
-    if (rgba) memcpy(g->stagingMap, rgba, size_t(w) * h * 4);
 
     VkDevice dev = g->ctx->device;
     uint32_t index = 0;
@@ -466,24 +451,16 @@ void PresentImpl(const uint8_t* rgba, const TextureInfo* gpuSource, uint32_t w, 
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &bi);
     VkImage dst = g->images[index];
-    if (gpuSource) {   // calcul : mémoire invitée -> image source, puis même suite que l'envoi CPU
-        vk::Context::Transition(cmd, g->source.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-        vkResetDescriptorPool(g->ctx->device, g->decodePool, 0);
-        VkDescriptorSetLayout layout = RendererDecodeSetLayout();
-        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-        ai.descriptorPool = g->decodePool;
-        ai.descriptorSetCount = 1;
-        ai.pSetLayouts = &layout;
-        if (vkAllocateDescriptorSets(g->ctx->device, &ai, &g->decodeSet) == VK_SUCCESS)
-            RendererRecordDecode(cmd, g->decodeSet, *gpuSource, g->source.view);
-        vk::Context::Transition(cmd, g->source.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    } else {
-        vk::Context::Transition(cmd, g->source.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = {w, h, 1};
-        vkCmdCopyBufferToImage(cmd, g->staging, g->source.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    }
+    // image native : lots natifs soumis avant sur la même file, barrière globale
+    VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, nullptr, 0, nullptr);
+    vk::Context::Transition(cmd, g->source.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkImageBlit b{};   // blit : conversion de format éventuelle (cible native B8G8R8A8, 10 bits…)
+    b.srcSubresource = b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    b.srcOffsets[1] = b.dstOffsets[1] = {int32_t(w), int32_t(h), 1};
+    vkCmdBlitImage(cmd, native, VK_IMAGE_LAYOUT_GENERAL, g->source.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
     // Post-traitement (options [post]) : passes de calcul ; l'étirement part ensuite de leur résultat
     VkImage blitSrc = g->source.image;
     VkImageLayout blitLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
@@ -568,6 +545,7 @@ void PresentImpl(const uint8_t* rgba, const TextureInfo* gpuSource, uint32_t w, 
     si.signalSemaphoreCount = 1;
     si.pSignalSemaphores = &g->done[index];
     vkResetFences(dev, 1, &g->fence);
+    std::unique_lock<std::mutex> fileLock(g->ctx->queueLock);
     if (vkQueueSubmit(g->ctx->queue, 1, &si, g->fence) != VK_SUCCESS) { fprintf(stderr, "[fenetre] soumission échouée\n"); return; }
     g->inFlight = true;
     VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
@@ -579,32 +557,6 @@ void PresentImpl(const uint8_t* rgba, const TextureInfo* gpuSource, uint32_t w, 
     r = vkQueuePresentKHR(g->ctx->queue, &pi);
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) g->stale = true;
     else if (r != VK_SUCCESS) fprintf(stderr, "[fenetre] présentation : erreur %d\n", int(r));
-}
-
-void PresentFrame(const uint8_t* rgba, uint32_t w, uint32_t h, uint32_t drawableW, uint32_t drawableH) {
-    PresentImpl(rgba, nullptr, w, h, drawableW, drawableH);
-}
-
-bool PresentFrameGpu(const TextureInfo& t, uint32_t drawableW, uint32_t drawableH) {
-    if (!g || t.format != 6 || t.dimension != 1 || !t.width || !t.height) return false;
-    if (!g->decodeTried) {   // pool d'un jeu (tampon mémoire + image) ; source recréée avec l'usage STORAGE
-        g->decodeTried = true;
-        if (RendererDecodeSetLayout() == VK_NULL_HANDLE) return false;
-        VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}};
-        VkDescriptorPoolCreateInfo dp{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        dp.maxSets = 1;
-        dp.poolSizeCount = 2;
-        dp.pPoolSizes = ps;
-        if (vkCreateDescriptorPool(g->ctx->device, &dp, nullptr, &g->decodePool) != VK_SUCCESS) { g->decodePool = VK_NULL_HANDLE; return false; }
-        g_sourceStorage = true;
-        WaitFrame();
-        if (g->source.image) g->ctx->DestroyImage(g->source);
-        g->source = {};
-        fprintf(stderr, "[fenetre] tampon d'image décodé sur GPU\n");
-    }
-    if (g->decodePool == VK_NULL_HANDLE || !RendererCanDecodeFrame(t)) return false;   // sinon : chemin CPU
-    PresentImpl(nullptr, &t, t.width, t.height, drawableW, drawableH);
-    return true;
 }
 
 }  // namespace wk::gpu

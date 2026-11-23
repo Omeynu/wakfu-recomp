@@ -4,6 +4,7 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -21,8 +22,8 @@ namespace wk::vk {
     X(vkCreateImage) X(vkDestroyImage) X(vkGetImageMemoryRequirements) X(vkAllocateMemory)         \
     X(vkFreeMemory) X(vkBindImageMemory) X(vkCreateBuffer) X(vkDestroyBuffer)                     \
     X(vkGetBufferMemoryRequirements) X(vkBindBufferMemory) X(vkMapMemory) X(vkUnmapMemory)          \
-    X(vkCmdPipelineBarrier) X(vkCmdClearColorImage) X(vkCmdCopyImageToBuffer)                      \
-    X(vkCmdCopyBufferToImage) X(vkCreateImageView) X(vkDestroyImageView)                          \
+    X(vkCmdPipelineBarrier) X(vkCmdClearColorImage) X(vkCmdCopyImageToBuffer)                    \
+    X(vkCmdCopyBufferToImage) X(vkCmdCopyBuffer) X(vkCreateImageView) X(vkDestroyImageView)                          \
     X(vkCreateShaderModule) X(vkDestroyShaderModule) X(vkCreatePipelineLayout) X(vkCreatePipelineCache) X(vkGetPipelineCacheData)                   \
     X(vkDestroyPipelineLayout) X(vkCreateGraphicsPipelines) X(vkDestroyPipeline)                   \
     X(vkCreateDescriptorSetLayout) X(vkDestroyDescriptorSetLayout) X(vkCreateDescriptorPool)        \
@@ -32,9 +33,10 @@ namespace wk::vk {
     X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdBindVertexBuffers)                      \
     X(vkCmdBindIndexBuffer) X(vkCmdDraw) X(vkCmdDrawIndexed) X(vkCmdSetViewport) X(vkCmdSetScissor) \
     X(vkCmdPushConstants) X(vkCreateFence) X(vkDestroyFence) X(vkWaitForFences) X(vkResetFences) X(vkGetFenceStatus)          \
-    X(vkResetDescriptorPool) X(vkGetMemoryHostPointerPropertiesEXT) X(vkCmdClearAttachments)   \
+    X(vkResetDescriptorPool) X(vkCmdClearAttachments)   \
     X(vkCreateComputePipelines) X(vkCmdDispatch) X(vkCmdClearDepthStencilImage) X(vkCmdSetStencilReference) \
-    X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdBlitImage) X(vkResetCommandBuffer) X(vkCreateSemaphore) X(vkDestroySemaphore)
+    X(vkCmdSetStencilCompareMask) X(vkCmdSetStencilWriteMask) X(vkCmdBlitImage) X(vkResetCommandBuffer) X(vkCreateSemaphore) X(vkDestroySemaphore) \
+    X(vkCmdResolveImage) X(vkCmdCopyImage) X(vkCmdSetBlendConstants) X(vkGetBufferDeviceAddress)
 
 #define WK_VK_DECLARE(name) extern PFN_##name name;
 WK_VK_GLOBAL(WK_VK_DECLARE)
@@ -65,26 +67,25 @@ struct Context {
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
     VkQueue queue = VK_NULL_HANDLE;
+    std::mutex queueLock;               // soumissions : fil natif et présentation
     uint32_t queueFamily = 0;
     VkCommandPool pool = VK_NULL_HANDLE;
     std::string deviceName;
     bool validation = false;
-    bool hostMemoryImport = false;      // VK_EXT_external_memory_host activée
-    bool geometryShader = false;        // fonction activée (rectangles)
-    float timestampPeriod = 0;          // ns par tic d'horodatage (0 : horodatages non pris en charge)
-    float maxAnisotropy = 0;            // samplerAnisotropy activée si > 0 (limite du GPU)
-    bool memoryFdExport = false;        // VK_KHR_external_memory_fd activée (Linux)
-    bool dmaBufExport = false;          // VK_EXT_external_memory_dma_buf activée (Linux)
+    bool bc = false;                    // textureCompressionBC activée (textures DXT natives)
+    int deviceType = 0;                 // VkPhysicalDeviceType (config::MsaaActif)
+    float timestampPeriod = 0;
+    uint64_t timestampMask = ~0ull;     // bits valides des horodatages de la file graphique          // ns par tic d'horodatage (0 : horodatages non pris en charge)
     bool swapchain = false;             // VK_KHR_swapchain activée (présentation dans une fenêtre)
-    VkDeviceSize hostPointerAlignment = 4096;
-    VkDeviceSize uniformAlignment = 256;
+    bool natifShaders = false;          // bufferDeviceAddress + runtimeDescriptorArray + shaderInt64 (shaders natifs)
+    std::string natifManque;            // fonctions absentes parmi celles-ci (message au joueur)
 
     // Chargement de Vulkan, instance (validation si WAKFU_VK_VALIDATION=1), premier GPU capable.
     bool Init(std::string* error);
     void Shutdown();
 
     uint32_t FindMemory(uint32_t typeBits, VkMemoryPropertyFlags props) const;
-    bool CreateImage(uint32_t w, uint32_t h, VkFormat format, VkImageUsageFlags usage, Image* out);
+    bool CreateImage(uint32_t w, uint32_t h, VkFormat format, VkImageUsageFlags usage, Image* out, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT);
     void DestroyImage(Image& img);
     // Commandes ponctuelles : enregistre via `record`, soumet, attend.
     template <class F> void Submit(F record);

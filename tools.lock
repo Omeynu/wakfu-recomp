@@ -6,3 +6,9 @@ UnleashedRecomp https://github.com/hedge-dev/UnleashedRecomp cf829a9eca8fb680fba
 # Patch local appliqué à XenonRecomp : patches/xenonrecomp-wakfu.patch (52 instructions, bdnzf généralisé)
 # Tests : GNU assembler (GNU Binutils for Debian) 2.44 ; qemu-ppc version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)
 Xenia (référence GPU, lecture seule) https://github.com/xenia-project/xenia 95a5c3ee250f80c3b9d139658649d9ffb6db3eec  # src/xenia/gpu seulement
+# DXC officiel (microsoft/DirectXShaderCompiler v1.9.2609, publiée le 2026-09-29, licence NCSA ; condensé publié par GitHub),
+# lié à XenosRecomp et utilisé par precompile-shaders.sh dans les paquets natif (dxc-bin n'est plus utilisé) :
+DXC-linux  96faadc7f5c282d2ffda49804beb4c3ee38127bc252b723234e3c5cdf7aa39a1 https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz
+# Sous-modules de XenosRecomp utilisés : fmt, smol-v, xxHash, zstd (épinglés par son commit). Ancien, NON distribué : dxc-bin https://github.com/renderbag/dxc-bin 12395e36295f950361ca842d8cc461492412facc
+#   (libdxcompiler.so 1.8 dev 4662-416fab6b, SHA-256 da5e0cdfaabcc004b6e29231eec565249835412ad33654e074623d707b5ede11 ;
+#    dxc-linux SHA-256 e48ba27c7e989726d1219b0b900b15eb1b99b669faa3905da3ffba46c52306a9) ; xxHash 2bf8313b934633b2a5b7e8fd239645b85e10c852

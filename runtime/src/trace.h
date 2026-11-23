@@ -28,7 +28,7 @@ inline void Dump() {
     }
 }
 // c : B/b jeu entre/sort de BlockOnFence, K anneau non vide, Q anneau vidé, W/w attente du CP, S swap (CP),
-// P VdSwap (jeu), R lot retiré (fin GPU), U lot soumis
+// P VdSwap (jeu), R lot retiré (fin GPU), U lot soumis, N présentation native (numéro du swap)
 inline void Mark(char c, uint32_t a = 0) {
     if (!Start() || g_frame.load() < Start()) return;
     const uint32_t i = g_n.fetch_add(1);

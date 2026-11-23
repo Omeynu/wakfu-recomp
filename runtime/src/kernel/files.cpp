@@ -275,8 +275,6 @@ WK_IMPORT(NtReadFile) {
     uint64_t off = f->pos;
     if (ctx.r10.u32) { int64_t o = int64_t(Ld64(ctx.r10.u32)); if (o >= 0) off = uint64_t(o); }
     const uint32_t dst = ctx.r8.u32;
-    // mémoire physique surveillée : lecture système (pas de faute, EFAULT) -> plage rendue inscriptible d'abord
-    if (dst >= 0xA0000000u && dst < 0xE0000000u) platform::WatchTouch(dst, uint32_t(std::min<uint64_t>(0xE0000000ull, uint64_t(dst) + ctx.r9.u32)), true);
     int64_t n = platform::ReadAt(f->fd, Host(dst), ctx.r9.u32, off);
     if (n < 0) n = 0;
     f->pos = off + n;

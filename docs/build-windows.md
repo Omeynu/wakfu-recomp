@@ -49,14 +49,12 @@ pacman -S --needed git python mingw-w64-clang-x86_64-{clang,lld,cmake,ninja,SDL2
 ## 2. Sources et fichiers du jeu
 
 ```sh
-git clone <url-du-dépôt> wakfu-recomp && cd wakfu-recomp
+git clone https://github.com/Omeynu/wakfu-recomp && cd wakfu-recomp
 mkdir -p ../wakfu-work && ln -s ../wakfu-work work      # ou un dossier « work » à la place du lien
 ```
 
-- C++ généré : télécharger l'archive de la release `ppc-…` et l'extraire dans `work/out/` (`work/out/ppc/`),
-  ou le régénérer (voir README : XenonRecomp + patch).
-- Jeu : votre copie, extraite avec `python scripts/stfs_extract.py` dans `work/game/base` et `work/game/tu2`,
-  puis `xexdump` pour `work/game/patched/{default.xex,image.bin,patched.txt}` (voir README).
+- Jeu : votre copie, préparée par `wakfu-prepare` (voir [`BUILDING.md`](../BUILDING.md), étape 2) dans `work/game/`.
+- C++ généré : XenonRecomp patché (même fichier, étape 3), dans `work/out/ppc/`.
 - Stubs d'imports : `python runtime/tools/gen_imports.py work/game/patched/default.xex work/game/patched/patched.txt <XenonUtils/xbox> work/runtime-gen`.
 
 ## 3. Compilation

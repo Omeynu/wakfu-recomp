@@ -20,13 +20,6 @@ grep -q '^\[rendu\] Vulkan : llvmpipe' "${log%.log}-2.log" || { echo "ÉCHEC : G
 logos=$(grep -c '^\[config\] logo sauté' "${log%.log}-2.log")
 [ "$logos" -eq 2 ] || { echo "ÉCHEC : $logos logo(s) sauté(s) au lieu de 2"; fail=1; }
 grep -q '^\[config\] \[audio\] volume : valeur invalide' "${log%.log}-2.log" || { echo "ÉCHEC : volume invalide non signalé"; fail=1; }
-# Échelle de rendu interne 2 : cibles EDRAM au double du pas (1280 -> 2560), capture de l'écran-titre non uniforme
-printf '[video]\nechelle_rendu = 2\n' > "$data/config.toml"
-cap="${log%.log}-echelle"; rm -rf "$cap"
-WAKFU_RENDER=1 WAKFU_STOP_AT_SWAP=900 WAKFU_CAPTURE=900 WAKFU_CAPTURE_DIR="$cap" timeout 600 "$exe" "$image" "$xex" "$base" "$tu" "$data" \
-    > "${log%.log}-4.log" 2>&1 || { echo "ÉCHEC : lancement à l'échelle 2 (code $?)"; fail=1; }
-grep -q '^\[rendu\] cible EDRAM base [0-9]* format [0-9]* pas 2560' "${log%.log}-4.log" || { echo "ÉCHEC : cibles non agrandies"; fail=1; }
-[ "$(wc -c < "$cap/image_900.png" 2>/dev/null || echo 0)" -gt 100000 ] || { echo "ÉCHEC : capture à l'échelle 2 absente ou uniforme"; fail=1; }
 if command -v Xvfb > /dev/null; then
     printf '[video]\nlargeur = 800\nhauteur = 600\nvsync = true\nlimite_images = 10\ngpu = "llvmpipe"\n' > "$data/config.toml"
     Xvfb :97 -screen 0 1920x1080x24 > /dev/null 2>&1 & xvfb=$!

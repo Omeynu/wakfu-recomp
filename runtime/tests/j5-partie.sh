@@ -21,7 +21,7 @@ start=$(grep -n '^\[jeu\] Start create game' "$log" | head -1 | cut -d: -f1)
 lua=$(grep -c 'ouvert .*\.lua ->' "$log")
 echo "Scripts .lua ouverts : $lua"
 [ "$lua" -gt 0 ] || { echo "ÉCHEC : aucun script .lua"; fail=1; }
-f0=$(awk -v s="$start" 'NR > s && /^\[image [0-9]+\]/ { gsub(/[^0-9]/, "", $2); print $2; exit }' "$log")
+f0=$(awk -v s="$start" 'NR > s && /^\[natif [0-9]+\] draws/ { gsub(/[^0-9]/, "", $2); print $2; exit }' "$log")
 f1=$(grep -o '^\[arret\] [0-9]* VdSwap' "$log" | grep -o '[0-9]*' | tail -1)
 echo "Première image après la création : ${f0:-?} ; dernière : ${f1:-?}"
 [ -n "$f0" ] && [ -n "$f1" ] && [ $((f1 - f0)) -ge 300 ] || { echo "ÉCHEC : moins de 300 images de jeu"; fail=1; }

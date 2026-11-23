@@ -25,7 +25,6 @@ Rien de recompilé n'est distribué : tout est produit sur le PC à partir de vo
 ```toml
 [video]
 mode = "sans_bordure"
-echelle_rendu = 2
 afficher_images_par_seconde = true
 
 [post]

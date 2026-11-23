@@ -14,9 +14,14 @@ void DownmixToStereo(const uint8_t* in, float* out);
 
 // Ouvre le périphérique (une fois) ; false : pas de son (périphérique absent ou build sans SDL2).
 bool Open();
-// File une trame invitée (sans effet si le périphérique n'est pas ouvert).
-void Submit(const uint8_t* guestFrame);
+// File une trame stéréo (2 x 256 flottants entrelacés : somme des clients), volume appliqué et bornée à [-1, 1]
+// (sans effet si le périphérique n'est pas ouvert).
+void Submit(const float* mix);
 // Trames en attente de lecture côté hôte (0 si pas de périphérique).
 uint32_t QueuedFrames();
+// Bilan du périphérique depuis le relevé précédent (journal) : appels du périphérique, appels servis incomplets
+// (sous-alimentations, complétés de silence) et échantillons manquants.
+struct Bilan { uint32_t appels = 0, sousAlimentations = 0, echantillonsParAppel = 0; uint64_t manquants = 0; };
+Bilan Releve();
 
 }  // namespace wk::audio

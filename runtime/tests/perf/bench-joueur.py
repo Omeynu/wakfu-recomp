@@ -1,4 +1,5 @@
-# bench2.py <étiquette> [VAR=val...] : sauvegarde du joueur, Continue Game, img/s sur 600 images après g0 (≥ 1000 draws)
+# bench-joueur.py <étiquette> [VAR=val...] : sauvegarde du joueur, Continue Game, img/s sur 600 images après g0
+# (première ligne [natif N] à 1000 draws ou plus ; lignes toutes les 60 images)
 import os, re, subprocess, sys, time, shutil
 W = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../work'); S = os.environ.get('BENCH_DIR', '/tmp/wakfu-bench'); os.makedirs(S, exist_ok=True)
 tag = sys.argv[1]; data = f'{S}/b2-{tag}'; shutil.rmtree(data, ignore_errors=True); shutil.copytree(f'{W}/joueur-sauvegarde', data)
@@ -16,11 +17,11 @@ log = open(f'{data}.log', 'w')
 for line in p.stderr:
     log.write(line)
     if line.startswith('[diag]'): print(line, end='', flush=True)
-    m = re.match(r'\[image (\d+)\] draws (\d+)', line)
+    m = re.match(r'\[natif (\d+)\] draws (\d+)', line)
     if m:
         n, d = int(m[1]), int(m[2]); times[n] = time.monotonic()
         if g0 is None and d >= 1000: g0 = n
-    if line.startswith('[rendu ') and 'attentes' in line: last = line.split('lots')[1].strip()
+    if 'par image (60 dernières)' in line: last = line.split(' : ', 1)[1].strip()
 p.wait(); killer.cancel(); log.close()
 if g0 is None or g0 + 660 not in times: print(f'{tag} ÉCHEC g0={g0}'); sys.exit(1)
-print(f'{tag} g0={g0} img/s={600 / (times[g0 + 660] - times[g0 + 60]):.2f} ; lots {last}')
+print(f'{tag} g0={g0} img/s={600 / (times[g0 + 660] - times[g0 + 60]):.2f} ; {last}')

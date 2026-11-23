@@ -1,7 +1,17 @@
 // Tous les textes de la fenêtre du lanceur. %s, %d, %.1f : valeurs insérées par lanceur.cpp (même ordre en
 // français et en anglais). Les messages techniques (journal, erreurs détaillées des outils) restent en français.
 #include "textes.h"
+#include <cstdlib>
+#include <cstring>
+#include <initializer_list>
+#ifdef _WIN32
 #include <windows.h>
+#define OS "Windows"
+#define EXE "WakfuRecomp.exe"
+#else
+#define OS "Linux"
+#define EXE "WakfuRecomp"
+#endif
 
 namespace wk {
 
@@ -12,12 +22,12 @@ struct Entree { Texte id; const char* fr; const char* en; };
 const Entree kTextes[] = {
     { T_TitreFenetre, "Islands of Wakfu - WakfuRecomp", "Islands of Wakfu - WakfuRecomp" },
     { T_Marque, "ISLANDS OF WAKFU", "ISLANDS OF WAKFU" },
-    { T_SousMarque, "recompilé pour Windows", "recompiled for Windows" },
+    { T_SousMarque, "recompilé pour " OS, "recompiled for " OS },
 
     { T_Bienvenue, "Bienvenue !", "Welcome!" },
-    { T_AccueilIntro, "WakfuRecomp transforme votre copie Xbox 360 d'Islands of Wakfu en jeu Windows. "
+    { T_AccueilIntro, "WakfuRecomp transforme votre copie Xbox 360 d'Islands of Wakfu en jeu " OS ". "
                       "Tout se passe sur votre PC : rien n'est téléchargé.",
-                      "WakfuRecomp turns your Xbox 360 copy of Islands of Wakfu into a Windows game. "
+                      "WakfuRecomp turns your Xbox 360 copy of Islands of Wakfu into a " OS " game. "
                       "Everything happens on your PC: nothing is downloaded." },
     { T_AccueilEtape1, "Choisissez votre jeu et sa mise à jour (TU 2)", "Pick your game and its title update (TU 2)" },
     { T_AccueilEtape2, "Vérification, puis recompilation : de quelques minutes à une heure",
@@ -28,23 +38,28 @@ const Entree kTextes[] = {
     { T_OuInstaller, "Où installer le jeu ?", "Where should the game go?" },
     { T_InstNormale, "Installation normale", "Standard install" },
     { T_Recommande, "Recommandé", "Recommended" },
+#ifdef _WIN32
     { T_InstNormaleAide, "Jeu dans %LOCALAPPDATA%\\WakfuRecomp, sauvegardes et réglages dans %APPDATA%\\WakfuRecomp.",
                          "Game in %LOCALAPPDATA%\\WakfuRecomp, saves and settings in %APPDATA%\\WakfuRecomp." },
+#else
+    { T_InstNormaleAide, "Jeu, sauvegardes et réglages dans ~/.local/share/wakfu-recomp ; WakfuRecomp dans le menu des applications.",
+                         "Game, saves and settings in ~/.local/share/wakfu-recomp; WakfuRecomp in the applications menu." },
+#endif
     { T_InstPortable, "Portable", "Portable" },
-    { T_InstPortableAide, "Tout dans le dossier de WakfuRecomp.exe : %s (sauvegardes dans userdata).",
-                          "Everything in the WakfuRecomp.exe folder: %s (saves in userdata)." },
+    { T_InstPortableAide, "Tout dans le dossier de " EXE " : %s (sauvegardes dans userdata).",
+                          "Everything in the " EXE " folder: %s (saves in userdata)." },
     { T_CopierSauvegardes, "Copier mes sauvegardes existantes (%s)", "Copy my existing saves (%s)" },
-    { T_PortableProgramFiles, "Mode portable impossible : WakfuRecomp.exe est dans Program Files. Déplacez-le dans un autre "
+    { T_PortableProgramFiles, "Mode portable impossible : " EXE " est dans Program Files. Déplacez-le dans un autre "
                               "dossier (par exemple C:\\Jeux), ou gardez l'installation normale.",
-                              "Portable mode is not possible: WakfuRecomp.exe is in Program Files. Move it to another folder "
+                              "Portable mode is not possible: " EXE " is in Program Files. Move it to another folder "
                               "(for example C:\\Games), or keep the standard install." },
-    { T_PortableOneDrive, "Mode portable impossible : WakfuRecomp.exe est dans un dossier OneDrive, qui synchroniserait "
+    { T_PortableOneDrive, "Mode portable impossible : " EXE " est dans un dossier OneDrive, qui synchroniserait "
                           "plusieurs Go. Déplacez-le ailleurs, ou gardez l'installation normale.",
-                          "Portable mode is not possible: WakfuRecomp.exe is in a OneDrive folder, which would sync several GB. "
+                          "Portable mode is not possible: " EXE " is in a OneDrive folder, which would sync several GB. "
                           "Move it elsewhere, or keep the standard install." },
-    { T_PortableEcriture, "Mode portable impossible : le dossier de WakfuRecomp.exe n'est pas accessible en écriture. "
+    { T_PortableEcriture, "Mode portable impossible : le dossier de " EXE " n'est pas accessible en écriture. "
                           "Déplacez-le dans un dossier à vous, ou gardez l'installation normale.",
-                          "Portable mode is not possible: the WakfuRecomp.exe folder is not writable. "
+                          "Portable mode is not possible: the " EXE " folder is not writable. "
                           "Move it to a folder of yours, or keep the standard install." },
     { T_PortableEspace, "Mode portable impossible : seulement %.1f Go libres sur ce disque (environ 3 Go nécessaires).",
                         "Portable mode is not possible: only %.1f GB free on this drive (about 3 GB needed)." },
@@ -154,11 +169,15 @@ const Entree kTextes[] = {
     { T_Gpu, "Carte graphique", "Graphics card" },
     { T_GpuAide, "Une partie de son nom (ex. RX 6700) ; vide = choix automatique", "Part of its name (e.g. RX 6700); empty = automatic" },
     { T_GpuAuto, "automatique", "automatic" },
-    { T_Echelle, "Finesse du rendu", "Render quality" },
-    { T_EchelleAide, "Plus fin = plus net, mais plus exigeant", "Higher = sharper, but more demanding" },
     { T_Anticrenelage, "Anticrénelage", "Anti-aliasing" },
     { T_AnticrenelageAide, "Adoucit les bords en escalier", "Smooths jagged edges" },
     { T_AaAucun, "Aucun", "None" },
+    { T_Msaa, "Anticrénelage MSAA", "MSAA anti-aliasing" },
+    { T_MsaaAide, "Auto : activé sur carte graphique dédiée, désactivé sur GPU intégré (plus rapide)",
+      "Auto: on with a dedicated graphics card, off on integrated GPUs (faster)" },
+    { T_MsaaAuto, "Auto", "Auto" },
+    { T_Active, "Activé", "On" },
+    { T_Desactive, "Désactivé", "Off" },
     { T_Agrandissement, "Agrandissement de l'image", "Image upscaling" },
     { T_AgrandissementAide, "FSR 1 : plus net en 1440p ou 4K", "FSR 1: sharper at 1440p or 4K" },
     { T_AgrLineaire, "Linéaire", "Linear" },
@@ -170,8 +189,6 @@ const Entree kTextes[] = {
     { T_GammaAide, "Plus grand : tons moyens plus clairs", "Higher: brighter mid-tones" },
     { T_CouleurXbox, "Couleurs de la Xbox 360", "Xbox 360 colours" },
     { T_CouleurXboxAide, "Imite la courbe de couleurs de la console", "Mimics the console's colour curve" },
-    { T_Anisotrope, "Filtrage des textures", "Texture filtering" },
-    { T_AnisotropeAide, "Textures plus nettes vues de biais", "Sharper textures at an angle" },
     { T_Volume, "Volume général", "Master volume" },
     { T_VolumeAide, "Musique et effets : menu du jeu", "Music and effects: in-game menu" },
     { T_Vibrations, "Vibrations de la manette", "Controller vibration" },
@@ -180,13 +197,15 @@ const Entree kTextes[] = {
     { T_ArrierePlanAide, "Quand la fenêtre du jeu n'est pas au premier plan", "When the game window is not in front" },
     { T_PasserLogos, "Passer les logos d'introduction", "Skip intro logos" },
     { T_PasserLogosAide, "", "" },
+    { T_Langue, "Langue du jeu", "Game language" },
+    { T_LangueAide, "Auto : langue du système (anglais si le jeu ne l'a pas)", "Auto: system language (English if the game lacks it)" },
+    { T_LangueAuto, "Auto", "Auto" },
     { T_Console, "Fenêtre du journal", "Log window" },
     { T_ConsoleAide, "Sinon, journal écrit dans journal.txt", "Otherwise, the log goes to journal.txt" },
     { T_ClavierAide, "Cliquez sur une commande, puis appuyez sur la touche voulue.", "Click a command, then press the key you want." },
     { T_ParDefaut, "%s (par défaut)", "%s (default)" },
     { T_AppuyerTouche, "Appuyez sur une touche...", "Press a key..." },
     { T_Reinitialiser, "Touche par défaut", "Default key" },
-    { T_Desactive, "Désactivé", "Off" },
     { T_CmdA, "Bouton A", "A button" },
     { T_CmdB, "Bouton B", "B button" },
     { T_CmdX, "Bouton X", "X button" },
@@ -214,7 +233,7 @@ const Entree kTextes[] = {
 
     { T_Jouer, "Jouer", "Play" },
     { T_Recompiler, "Recompiler", "Recompile" },
-    { T_SousTitreJeu, "Votre copie Xbox 360, recompilée pour Windows", "Your Xbox 360 copy, recompiled for Windows" },
+    { T_SousTitreJeu, "Votre copie Xbox 360, recompilée pour " OS, "Your Xbox 360 copy, recompiled for " OS },
     { T_Donnees, "Sauvegardes et réglages : %s", "Saves and settings: %s" },
     { T_NouvelleVersion, "Nouvelle version de WakfuRecomp : recompilez le jeu pour en profiter.",
                          "New WakfuRecomp version: recompile the game to benefit from it." },
@@ -241,6 +260,44 @@ const Entree kTextes[] = {
                  "It will resume where it stopped the next time you start WakfuRecomp." },
     { T_QuitterOui, "Interrompre et quitter", "Stop and quit" },
     { T_ErrEcritureConfig, "Impossible d'enregistrer les réglages : %s", "Could not save the settings: %s" },
+
+    { T_PasDeSelecteur, "Aucun sélecteur de fichiers (zenity ou kdialog) : glissez le fichier dans cette fenêtre.",
+                        "No file picker (zenity or kdialog): drag the file into this window." },
+    { T_EtapeJeu, "Jeu", "Game" },
+    { T_EtapeInstallation, "Installation", "Installation" },
+    { T_EtapeJouer, "Jouer", "Play" },
+    { T_GarderCompilation, "Garder les fichiers de compilation", "Keep the build files" },
+    { T_GarderCompilationAide, "Une prochaine recompilation sera plus rapide, mais plusieurs Go restent occupés sur le disque. "
+                               "Sinon, ils sont supprimés après l'installation (le jeu, vos sauvegardes et le cache des shaders restent).",
+                               "A later recompilation will be faster, but several GB stay used on the disk. Otherwise they are "
+                               "deleted after the installation (the game, your saves and the shader cache stay)." },
+    { T_IconeBureau, "Créer une icône sur le bureau", "Create a desktop icon" },
+    { T_Desinstaller, "Désinstaller", "Uninstall" },
+    { T_DesinstTitre, "Désinstaller WakfuRecomp", "Uninstall WakfuRecomp" },
+    { T_DesinstIntro, "Seront supprimés :", "Will be deleted:" },
+    { T_DesinstSauvegardes, "Supprimer aussi mes sauvegardes et réglages", "Also delete my saves and settings" },
+    { T_DesinstGarde, "Jamais touchés : les fichiers du jeu que vous avez choisis (paquets, images) et ce lanceur.",
+                      "Never touched: the game files you picked (packages, images) and this launcher." },
+    { T_DesinstGardeSauv, "Gardés : vos sauvegardes et réglages (%s).", "Kept: your saves and settings (%s)." },
+    { T_ConfirmSauvTitre, "Supprimer vos sauvegardes ?", "Delete your saves?" },
+    { T_ConfirmSauv, "Vos sauvegardes et réglages seront définitivement supprimés.", "Your saves and settings will be permanently deleted." },
+    { T_Supprimer, "Supprimer", "Delete" },
+    { T_DesinstEnCours, "Suppression en cours...", "Deleting..." },
+    { T_DesinstFini, "WakfuRecomp est désinstallé", "WakfuRecomp is uninstalled" },
+    { T_DesinstFiniDetail, "Le lanceur n'a pas été touché : %s. Vous pouvez jeter ce fichier.",
+                           "The launcher was not touched: %s. You can throw this file away." },
+    { T_ErrSuppression, "La suppression n'a pas pu aller au bout : %s", "The deletion could not complete: %s" },
+    { T_AnciennesTitre, "Anciennes installations trouvées", "Old installations found" },
+    { T_AnciennesIntro, "Ces versions précédentes ne servent plus (rien n'en est repris). Les supprimer libère de la place.",
+                        "These previous versions are no longer used (nothing is taken from them). Deleting them frees space." },
+    { T_PasMaintenant, "Pas maintenant", "Not now" },
+    { T_TailleGo, "%.1f Go", "%.1f GB" },
+    { T_DepTitre, "Composants manquants", "Missing components" },
+    { T_DepPacman, "Ils peuvent être installés avec pacman (mot de passe administrateur demandé).",
+                   "They can be installed with pacman (administrator password asked)." },
+    { T_DepAutre, "Installez-les avec le gestionnaire de paquets de votre distribution, puis réessayez.",
+                  "Install them with your distribution's package manager, then try again." },
+    { T_Installer, "Installer", "Install" },
 };
 
 static_assert(sizeof kTextes / sizeof kTextes[0] == NbTextes, "texte manquant ou en double");
@@ -251,7 +308,14 @@ bool g_fr = true;
 
 void initLangue()
 {
+#ifdef _WIN32
     g_fr = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_FRENCH;
+#else
+    const char* l = nullptr;
+    for (const char* v : { "LC_ALL", "LC_MESSAGES", "LANG" })
+        if ((l = std::getenv(v)) && *l) break;
+    g_fr = l && std::strncmp(l, "fr", 2) == 0;
+#endif
     for (auto& t : g_table) t = "?";
     for (auto& e : kTextes) g_table[e.id] = g_fr ? e.fr : e.en;
 }

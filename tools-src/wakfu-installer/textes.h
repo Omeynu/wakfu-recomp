@@ -1,4 +1,4 @@
-// Textes de la fenêtre du lanceur (français / anglais, selon la langue de Windows) : tous dans textes.cpp.
+// Textes de la fenêtre du lanceur (français / anglais, selon la langue du système) : tous dans textes.cpp.
 #pragma once
 
 namespace wk {
@@ -25,11 +25,11 @@ enum Texte {
     // Réglages
     T_Reglages, T_ModeInstallation, T_OuvrirDossier, T_OngletAffichage, T_OngletImage, T_OngletSonManette, T_OngletClavier, T_Enregistrer, T_Defauts,
     T_Mode, T_ModeAide, T_ModeFenetre, T_ModePleinEcran, T_ModeSansBordure, T_Taille, T_TailleAide, T_Vsync, T_VsyncAide,
-    T_Limite, T_LimiteAide, T_Aucune, T_AfficherIps, T_AfficherIpsAide, T_Gpu, T_GpuAide, T_GpuAuto, T_Echelle, T_EchelleAide,
-    T_Anticrenelage, T_AnticrenelageAide, T_AaAucun, T_Agrandissement, T_AgrandissementAide, T_AgrLineaire, T_Nettete, T_NetteteAide, T_Luminosite, T_LuminositeAide, T_Gamma, T_GammaAide,
-    T_CouleurXbox, T_CouleurXboxAide, T_Anisotrope, T_AnisotropeAide, T_Volume, T_VolumeAide, T_Vibrations, T_VibrationsAide,
-    T_ArrierePlan, T_ArrierePlanAide, T_PasserLogos, T_PasserLogosAide, T_Console, T_ConsoleAide,
-    T_ClavierAide, T_ParDefaut, T_AppuyerTouche, T_Reinitialiser, T_Desactive,
+    T_Limite, T_LimiteAide, T_Aucune, T_AfficherIps, T_AfficherIpsAide, T_Gpu, T_GpuAide, T_GpuAuto,
+    T_Anticrenelage, T_AnticrenelageAide, T_AaAucun, T_Msaa, T_MsaaAide, T_MsaaAuto, T_Active, T_Desactive, T_Agrandissement, T_AgrandissementAide, T_AgrLineaire, T_Nettete, T_NetteteAide, T_Luminosite, T_LuminositeAide, T_Gamma, T_GammaAide,
+    T_CouleurXbox, T_CouleurXboxAide, T_Volume, T_VolumeAide, T_Vibrations, T_VibrationsAide,
+    T_ArrierePlan, T_ArrierePlanAide, T_PasserLogos, T_PasserLogosAide, T_Langue, T_LangueAide, T_LangueAuto, T_Console, T_ConsoleAide,
+    T_ClavierAide, T_ParDefaut, T_AppuyerTouche, T_Reinitialiser,
     T_CmdA, T_CmdB, T_CmdX, T_CmdY, T_CmdStart, T_CmdBack, T_CmdLb, T_CmdRb, T_CmdLt, T_CmdRt, T_CmdHaut, T_CmdBas,
     T_CmdGauche, T_CmdDroite, T_CmdClicG, T_CmdClicD, T_CmdSgH, T_CmdSgB, T_CmdSgG, T_CmdSgD, T_CmdSdH, T_CmdSdB,
     T_CmdSdG, T_CmdSdD,
@@ -38,10 +38,15 @@ enum Texte {
     T_ConfirmRecomp, T_Annuler, T_SortieCode, T_Sortie3, T_Sortie4, T_Sortie5, T_Sortie6, T_VoirJournalJeu, T_Fermer,
     // Erreurs et fermeture
     T_ErreurTitre, T_ErreurDemarrage, T_QuitterTitre, T_Quitter, T_QuitterOui, T_ErrEcritureConfig,
+    // Linux, étapes, ménage, raccourcis, désinstallation, anciennes installations, dépendances
+    T_PasDeSelecteur, T_EtapeJeu, T_EtapeInstallation, T_EtapeJouer, T_GarderCompilation, T_GarderCompilationAide, T_IconeBureau,
+    T_Desinstaller, T_DesinstTitre, T_DesinstIntro, T_DesinstSauvegardes, T_DesinstGarde, T_DesinstGardeSauv, T_ConfirmSauvTitre,
+    T_ConfirmSauv, T_Supprimer, T_DesinstEnCours, T_DesinstFini, T_DesinstFiniDetail, T_ErrSuppression, T_AnciennesTitre,
+    T_AnciennesIntro, T_PasMaintenant, T_TailleGo, T_DepTitre, T_DepPacman, T_DepAutre, T_Installer,
     NbTextes
 };
 
-void initLangue();          // GetUserDefaultUILanguage : français si la langue de Windows est le français
+void initLangue();          // français si la langue du système est le français (Windows : GetUserDefaultUILanguage ; Linux : LC_ALL, LC_MESSAGES, LANG)
 bool langueFr();
 const char* tr(Texte t);    // UTF-8
 

@@ -1,7 +1,7 @@
 #!/bin/bash
-# Construit WakfuRecomp.exe : installateur Windows x64 en un seul fichier (amorce + archive zstd ajoutée à la fin).
+# Construit WakfuRecomp.exe : lanceur et installateur Windows x64 en un seul fichier (amorce + archive zstd ajoutée à la fin).
 # L'archive contient la chaîne de compilation (llvm-mingw, CMake, ninja), XenonRecomp.exe (patché),
-# wakfu-prepare.exe, les sources du runtime et les bibliothèques précompilées (glslang, SDL2, FFmpeg minimal,
+# wakfu-prepare.exe, XenosRecomp.exe + DXC officiel (shaders natifs), les sources du runtime et les bibliothèques précompilées (glslang, SDL2, FFmpeg minimal,
 # en-têtes Vulkan). AUCUN fichier du jeu ni C++ recompilé : tout ce qui vient du jeu est produit chez l'utilisateur.
 #
 # Usage : packaging/windows/build-installer.sh <dossier_de_construction> [<dossier jeu préparé, pour test>]
@@ -36,6 +36,9 @@ unpack() {  # <archive> <dossier> : extraction propre
         *.zip) python3 -I -m zipfile -e "$DL/$1" "$2" ;;
         *) tar -xf "$DL/$1" -C "$2" --strip-components=1 ;;
     esac
+}
+propre() {   # <source> <build> : un cache CMake fait depuis un autre emplacement (dossier copié) bloque cmake
+    grep -qsxF "CMAKE_HOME_DIRECTORY:INTERNAL=$1" "$2/CMakeCache.txt" || rm -rf "$2"
 }
 todo() { if [ -f "$BLD/.fait-$1" ]; then echo "== $1 : déjà fait"; return 1; fi; echo "== $1"; }
 fait() { touch "$BLD/.fait-$1"; }
@@ -106,16 +109,44 @@ if todo "$XR_KEY"; then   # commit de tools.lock + patch du dépôt
     fait "$XR_KEY"
 fi
 # XenonRecomp.exe et wakfu-prepare.exe : même arbre (wakfu-prepare inclut XenonRecomp, casse de Windows.h réglée)
+propre "$REPO/tools-src/wakfu-prepare" "$BLD/tools"
 run tools.log cmake -S "$REPO/tools-src/wakfu-prepare" -B "$BLD/tools" "${CROSS[@]}" -DXENONRECOMP_DIR="$XR"
 run tools.log ninja -C "$BLD/tools" wakfu-prepare XenonRecomp
+# XenosRecomp.exe (sources au commit de tools.lock, sans le sous-module tiers dxc-bin) lié au DXC officiel, et xr_hash.exe
+XS=$SRC/XenosRecomp
+XENOS_COMMIT=$(awk '$1 == "XenosRecomp" {print $3}' "$REPO/tools.lock")
+if todo "xenosrecomp-$XENOS_COMMIT"; then
+    rm -rf "$XS"
+    run xenos.log git clone -q https://github.com/hedge-dev/XenosRecomp "$XS"
+    run xenos.log git -C "$XS" checkout -q "$XENOS_COMMIT"
+    run xenos.log git -C "$XS" submodule update -q --init thirdparty/fmt thirdparty/smol-v thirdparty/xxHash thirdparty/zstd
+    fait "xenosrecomp-$XENOS_COMMIT"
+fi
+DXW=$SRC/dxc
+if todo dxc-2026_09_29; then   # chemins de l'archive Microsoft séparés par « \ »
+    rm -rf "$DXW"
+    python3 -I -c 'import os, sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+for i in z.infolist():
+    n = os.path.normpath(i.filename.replace("\\", "/"))
+    if i.is_dir() or n.startswith(("..", "/")): continue
+    p = os.path.join(sys.argv[2], n); os.makedirs(os.path.dirname(p), exist_ok=True)
+    open(p, "wb").write(z.read(i))' "$DL/dxc_2026_09_29.zip" "$DXW"
+    fait dxc-2026_09_29
+fi
+propre "$REPO/packaging/shaders/xenosrecomp" "$BLD/xenos"
+run xenos.log cmake -S "$REPO/packaging/shaders/xenosrecomp" -B "$BLD/xenos" "${CROSS[@]}" -DXENOSRECOMP_DIR="$XS" -DDXC_DIR="$DXW"
+run xenos.log ninja -C "$BLD/xenos" XenosRecomp xr_hash
 # Fenêtre du lanceur (amorce) : Dear ImGui (sources) et police Inter (Regular, SemiBold), avec SDL2 et zstd ci-dessus
 if todo imgui-1.93.0; then unpack imgui-1.93.0.tar.gz "$SRC/imgui"; fait imgui-1.93.0; fi
 if todo inter-4.1; then unpack Inter-4.1.zip "$SRC/inter"; fait inter-4.1; fi
 # Amorce de l'installateur
+propre "$REPO/tools-src/wakfu-installer" "$BLD/stub"
 run stub.log cmake -S "$REPO/tools-src/wakfu-installer" -B "$BLD/stub" "${CROSS[@]}" -Dzstd_DIR="$DEPS/zstd/lib/cmake/zstd" \
-    -DSDL2_DIR="$DEPS/SDL2/lib/cmake/SDL2" -DIMGUI_DIR="$SRC/imgui" -DINTER_DIR="$SRC/inter/extras/ttf" -DXENONRECOMP_DIR="$XR"
+    -DSDL2_DIR="$DEPS/SDL2/lib/cmake/SDL2" -DVULKAN_INCLUDE_DIR="$DEPS/vulkan/include" -DIMGUI_DIR="$SRC/imgui" -DINTER_DIR="$SRC/inter/extras/ttf" -DXENONRECOMP_DIR="$XR"
 run stub.log ninja -C "$BLD/stub"
 if [ -n "$GAME" ]; then   # gen_imports C++ (amorce) identique au script Python de référence
+    propre "$REPO/tools-src/wakfu-installer" "$BLD/stub-linux"
     run stub.log cmake -S "$REPO/tools-src/wakfu-installer" -B "$BLD/stub-linux" -G Ninja -DCMAKE_BUILD_TYPE=Release
     run stub.log ninja -C "$BLD/stub-linux" test_gen_imports
     rm -rf "$BLD/gi-py" "$BLD/gi-cpp"
@@ -126,7 +157,7 @@ fi
 
 # ---- Arborescence de l'archive ----
 echo "== assemblage"
-rm -rf "$STAGE"; mkdir -p "$STAGE"/{bin,sdk/XenonUtils,sdk/thirdparty/fmt,src,licences}
+rm -rf "$STAGE"; mkdir -p "$STAGE"/{bin,sdk/XenonUtils,sdk/thirdparty,src,licences}
 # llvm-mingw Windows, réduit à la cible x86_64 et aux outils nécessaires (clang, lld, ar/ranlib, windres)
 unpack llvm-mingw-$LLVM_TAG-ucrt-x86_64.zip "$BLD/llvm-win"
 L=$STAGE/llvm-mingw
@@ -151,11 +182,13 @@ cp "$XR/XenonUtils/ppc_context.h" "$STAGE/sdk/XenonUtils/"
 cp -r "$XR/XenonUtils/xbox" "$STAGE/sdk/XenonUtils/"
 cp -r "$XR/thirdparty/simde" "$STAGE/sdk/thirdparty/"
 rm -rf "$STAGE/sdk/thirdparty/simde"/{.git,test}
-cp -r "$XR/thirdparty/fmt/include" "$STAGE/sdk/thirdparty/fmt/"
 mkdir -p "$STAGE/sdk/thirdparty/tomlplusplus"   # config.toml du runtime (en-têtes seulement)
 cp -r "$XR/thirdparty/tomlplusplus/include" "$STAGE/sdk/thirdparty/tomlplusplus/"
-mkdir -p "$STAGE/sdk/thirdparty/xxHash"   # empreintes des textures (XXH3, en-tête seul)
+mkdir -p "$STAGE/sdk/thirdparty/xxHash"   # empreintes des shaders (XXH3, en-tête seul)
 cp "$XR/thirdparty/xxHash/xxhash.h" "$STAGE/sdk/thirdparty/xxHash/"
+# Shaders natifs (--natif) : XenosRecomp, xr_hash, DXC officiel (dxc.exe, dxcompiler.dll)
+mkdir -p "$STAGE/natif"
+cp "$BLD/xenos/XenosRecomp/XenosRecomp.exe" "$BLD/xenos/xr_hash.exe" "$XS/XenosRecomp/shader_common.h" "$DXW"/bin/x64/{dxc.exe,dxcompiler.dll} "$STAGE/natif/"   # pas dxil.dll (signature DXIL, licence Microsoft) : SPIR-V seulement
 # Bibliothèques précompilées
 mkdir -p "$STAGE/deps"
 cp -r "$DEPS"/{glslang,SDL2,ffmpeg,vulkan} "$STAGE/deps/"
@@ -164,7 +197,7 @@ rm -rf "$STAGE/deps/SDL2/share" "$STAGE/deps/ffmpeg/share"
 (cd "$REPO" && git ls-files -z runtime check config | xargs -0 cp --parents -t "$STAGE/src")
 # Licences tierces
 cp "$XR/LICENSE.md" "$STAGE/licences/XenonRecomp.txt"
-cp "$XR/thirdparty/fmt/LICENSE" "$STAGE/licences/fmt.txt"
+cp "$XR/thirdparty/fmt/LICENSE" "$STAGE/licences/fmt.txt"   # lié à XenonRecomp.exe
 cp "$XR/thirdparty/simde/COPYING" "$STAGE/licences/simde.txt"
 cp "$XR/thirdparty/tomlplusplus/LICENSE" "$STAGE/licences/tomlplusplus.txt"
 cp "$XR/thirdparty/xxHash/LICENSE" "$STAGE/licences/xxHash.txt"
@@ -179,6 +212,10 @@ cp "$SRC/ffmpeg/COPYING.LGPLv2.1" "$STAGE/licences/ffmpeg-LGPL-2.1.txt"
 cp "$SRC/glslang/LICENSE.txt" "$STAGE/licences/glslang.txt"
 cp "$SRC/vulkan/LICENSE.md" "$STAGE/licences/Vulkan-Headers.txt"
 cp "$REPO/runtime/third_party/xenia/LICENSE" "$STAGE/licences/xenia.txt"
+cp "$XS/LICENSE.md" "$STAGE/licences/XenosRecomp.txt"
+cp "$XS/thirdparty/smol-v/license.txt" "$STAGE/licences/smol-v.txt"
+cp "$DXW/LICENSE-LLVM.txt" "$STAGE/licences/DirectXShaderCompiler-LLVM.txt"
+cp "$DXW/LICENCE-MIT.txt" "$STAGE/licences/DirectXShaderCompiler-MIT.txt"
 cp "$REPO/runtime/third_party/fidelityfx-fsr1/LICENSE.txt" "$STAGE/licences/FidelityFX-FSR.txt"
 {
     cat "$HERE/LICENCES-TIERS.txt"

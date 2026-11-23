@@ -1,0 +1,13 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "repo": "Omeynu/wakfu-recomp",
+  "game": {
+    "kind": "folder",
+    "label": "A folder holding your Islands of Wakfu XBLA package (title 584109AA) and its title update 2 package. The first start recompiles the game on your PC (a few minutes to an hour)."
+  },
+  "start": {
+    "program": ["WakfuRecomp.exe"],
+    "args": ["{game}"]
+  }
+}

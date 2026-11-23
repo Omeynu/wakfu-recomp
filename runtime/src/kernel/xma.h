@@ -18,6 +18,10 @@ void ReleaseContext(uint32_t guestAddr);
 // Traite puis remet à zéro les registres clear, lock et kick (à appeler après une écriture du jeu).
 // Un contexte activé est décodé tant que sa sortie a de la place et que son entrée a des paquets.
 void ServiceRegisters();
+// Bilan depuis le relevé précédent (journal) : contextes décodés au kick, et passages où la sortie était vide sans
+// paquet d'entrée (le jeu n'a pas fourni la suite à temps, ou fin normale d'un son).
+struct Bilan { uint32_t decodages = 0, aVide = 0; };
+Bilan Releve();
 // Vrai si le décodeur FFmpeg xma2 est disponible (sinon les tampons d'entrée sont consommés sans sortie).
 bool HasDecoder();
 

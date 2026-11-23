@@ -16,8 +16,7 @@
 #ifdef WAKFU_HAS_SHADERGEN
 #include <SDL_vulkan.h>
 #include "../gpu/present.h"
-#include "../gpu/renderer.h"
-#include "../gpu/texture_decode.h"
+#include "../natif/device.h"
 #endif
 #endif
 
@@ -151,50 +150,50 @@ void Rumble(uint16_t left, uint16_t right) {
     if (g_controller && config::g.vibration) SDL_GameControllerRumble(g_controller, left, right, 1000);
 }
 
-void Present(const uint32_t fetch[6]) {
 #ifdef WAKFU_HAS_SHADERGEN
-    if (!g_window) return;
+// Présentation prête (contexte, surface, swapchain initialisés au premier appel)
+bool PresentReady() {
+    if (!g_window) return false;
     static bool ready = false, failed = false;
-    if (failed) return;
+    if (failed) return false;
     if (!ready) {
-        // Contexte du rendu s'il est actif (même périphérique), sinon contexte propre à la présentation
-        vk::Context* ctx = gpu::RendererContext();
-        static vk::Context own;
+        vk::Context* ctx = natif::Contexte();   // celui du rendu natif (même périphérique que les images présentées)
         std::string err;
-        if (!ctx) {
-            if (!own.Init(&err)) { fprintf(stderr, "[fenetre] Vulkan : %s (pas de présentation)\n", err.c_str()); failed = true; return; }
-            ctx = &own;
-        }
+        if (!ctx) return false;
         VkSurfaceKHR surface = VK_NULL_HANDLE;
         if (!SDL_Vulkan_CreateSurface(g_window, ctx->instance, &surface)) {
             fprintf(stderr, "[fenetre] surface : %s (pas de présentation)\n", SDL_GetError());
             failed = true;
-            return;
+            return false;
         }
         if (!gpu::PresentInit(ctx, surface, &err)) {
             fprintf(stderr, "[fenetre] %s (pas de présentation)\n", err.c_str());
             failed = true;
-            return;
+            return false;
         }
         fprintf(stderr, "[fenetre] présentation sur %s\n", ctx->deviceName.c_str());
         ready = true;
     }
-    // Tampon d'image : décodé sur GPU depuis la mémoire invitée ; sinon sur CPU comme la capture PNG
-    const gpu::TextureInfo t = gpu::ParseTextureFetch(fetch);
+    return true;
+}
+#endif
+void AfterPresent();
+
+// Fil natif : image native (layout GENERAL, travail soumis avant sur la même file) -> fenêtre
+void PresentNative(VkImage image, uint32_t w, uint32_t h) {
+#ifdef WAKFU_HAS_SHADERGEN
+    if (!PresentReady()) return;
     int dw = 0, dh = 0;
     SDL_Vulkan_GetDrawableSize(g_window, &dw, &dh);
-    if (!gpu::PresentFrameGpu(t, uint32_t(dw), uint32_t(dh))) {
-    static std::vector<uint8_t> rgba;
-    std::string why;
-    if (!gpu::DecodeTexture(t, &rgba, &why)) {
-        static bool logged = false;
-        if (!logged) fprintf(stderr, "[fenetre] tampon d'image non décodé : %s\n", why.c_str());
-        logged = true;
-        return;
-    }
-    for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;
-    gpu::PresentFrame(rgba.data(), t.width, t.height, uint32_t(dw), uint32_t(dh));
-    }
+    gpu::PresentFrameImage(image, w, h, uint32_t(dw), uint32_t(dh));
+    AfterPresent();
+#else
+    (void)image; (void)w; (void)h;
+#endif
+}
+
+void AfterPresent() {
+#ifdef WAKFU_HAS_SHADERGEN
     // Options limite_images (attente jusqu'à l'échéance de l'image) et afficher_images_par_seconde (titre)
     using clock = std::chrono::steady_clock;
     if (config::g.fpsLimit > 0) {
@@ -218,8 +217,6 @@ void Present(const uint32_t fetch[6]) {
             t0 = clock::now();
         }
     }
-#else
-    (void)fetch;
 #endif
 }
 #else
@@ -227,6 +224,7 @@ void Open() { fprintf(stderr, "[fenetre] runtime compilé sans SDL2 : pas de fen
 bool IsOpen() { return false; }
 void Pump() {}
 void Present(const uint32_t*) {}
+void PresentNative(VkImage, uint32_t, uint32_t) {}
 void Rumble(uint16_t, uint16_t) {}
 #endif
 

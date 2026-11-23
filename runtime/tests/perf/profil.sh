@@ -4,7 +4,7 @@ BIN=$1; TAG=$2; O=${PROF_DIR:-/tmp/wakfu-prof}/$TAG; rm -rf $O; mkdir -p $O
 cd "$(dirname "$0")/../../.."
 BENCH_DIR=$O BENCH_TIMEOUT=1500 BIN=$BIN python3 -I runtime/tests/perf/bench-joueur.py $TAG WAKFU_STOP_AT_SWAP=20000 WAKFU_PROFIL=1 > $O/bench.txt 2>&1 &
 L=$O/b2-$TAG.log
-until [ -f $L ] && grep -qE "^\[image (4[0-9]{3})\] draws [0-9]{4}" $L; do sleep 5; done
+until [ -f $L ] && grep -qE "^\[natif (4[0-9]{3})\] draws [0-9]{4}" $L; do sleep 5; done
 PID=$(pgrep -nx wakfu)
 declare -A a; for t in /proc/$PID/task/*; do s=($(sed 's/.*) //' $t/stat)); a[${t##*/}]=$(( ${s[11]} + ${s[12]} )); done
 sleep 5

@@ -33,8 +33,10 @@ bibliothèque ajoutée, donc ni stb_image (dont les derniers envois datent de mo
 |---|---|---|---|---|
 | XenonRecomp | github.com/hedge-dev/XenonRecomp | hedge-dev | 6 725 | patché localement (`patches/xenonrecomp-wakfu.patch`) |
 | XenosRecomp | github.com/hedge-dev/XenosRecomp | hedge-dev | 513 | |
+| DirectXShaderCompiler (DXC) | github.com/microsoft/DirectXShaderCompiler | Microsoft | 3 699 | v1.9.2609 (2026-09-29, alsepkow, CI Microsoft ; pas une préversion) : `linux_dxc_2026_09_28.x86_x64.tar.gz` SHA-256 `96faadc7…aa39a1` (`tools.lock`), `dxc_2026_09_29.zip` SHA-256 `ad31b1fc…e7f1` (`packaging/windows/deps.lock`) | condensés publiés par GitHub, identiques au téléchargement (19/11). Binaires officiels distribués dans les paquets natif : `dxc`/`libdxcompiler.so`, `dxc.exe`/`dxcompiler.dll` (licence NCSA/LLVM) ; ni `dxil`/`dxv` (licence Microsoft, inutiles pour SPIR-V). Lié à XenosRecomp (`packaging/shaders/xenosrecomp/CMakeLists.txt`) |
+| dxc-bin (sous-module de XenosRecomp) | github.com/renderbag/dxc-bin | renderbag (tiers, pas Microsoft) | ? | plus utilisé ni distribué (remplacé par le DXC officiel ci-dessus ; sous-module exclu des clones) |
 | UnleashedRecomp | github.com/hedge-dev/UnleashedRecomp | hedge-dev | 5 387 | référence seulement, rien n'est copié |
-| Xenia | github.com/xenia-project/xenia | xenia-project | 9 836 | fichiers `src/xenia/gpu` (BSD) dans `runtime/third_party/xenia` |
+| Xenia | github.com/xenia-project/xenia | xenia-project | 9 836 | mise en page des textures adaptée de `texture_util.cc` (BSD, licence dans `runtime/third_party/xenia`) ; fichiers `src/xenia/gpu` copiés retirés en N7 |
 
 ## Sources intégrées au dépôt (`runtime/third_party/`)
 
@@ -46,7 +48,7 @@ bibliothèque ajoutée, donc ni stb_image (dont les derniers envois datent de mo
 
 | Bibliothèque | Source | Propriétaire | Étoiles | Utilisée par le runtime |
 |---|---|---|---|---|
-| fmt | github.com/fmtlib/fmt | fmtlib | 25 928 | oui (fichiers Xenia) |
+| fmt | github.com/fmtlib/fmt | fmtlib | 25 928 | oui (XenonRecomp ; plus par le runtime depuis N7) |
 | simde | github.com/simd-everywhere/simde-no-tests | simd-everywhere (miroir officiel sans tests de `simde`, peu d'étoiles mais même organisation) | 13 | oui |
 | toml++ | github.com/marzer/tomlplusplus | Mark Gillard (auteur) | 2 187 | oui (`config.toml`) |
 | xxHash | github.com/Cyan4973/xxHash | Yann Collet (auteur) | 11 444 | non |

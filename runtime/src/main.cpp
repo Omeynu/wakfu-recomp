@@ -14,9 +14,6 @@
 #include "quit.h"
 #include <filesystem>
 #include <string>
-#ifdef WAKFU_HAS_SHADERGEN
-#include "gpu/renderer.h"
-#endif
 
 extern PPCFuncMapping PPCFuncMappings[];
 PPC_EXTERN_FUNC(_xstart);
@@ -29,13 +26,8 @@ extern std::string g_overlayDir, g_dataDir;   // kernel/files.cpp
 }
 
 namespace wk {
-[[noreturn]] void Quit(int code, const char* reason, bool saveCaches) {
+[[noreturn]] void Quit(int code, const char* reason) {
     fprintf(stderr, "[sortie] code %d : %s\n", code, reason);
-#ifdef WAKFU_HAS_SHADERGEN
-    if (saveCaches) gpu::RendererSavePipelineCache();
-#else
-    (void)saveCaches;
-#endif
     fflush(stdout);
     fflush(stderr);
     _Exit(code);
@@ -66,7 +58,7 @@ void OnCrash(int code, uintptr_t a) {
     fprintf(stderr, "\n");
     wk::DumpRecentCalls();
     wk::platform::PrintBacktrace();
-    wk::Quit(wk::kExitCrash, "plantage (voir [plantage] plus haut)", false);
+    wk::Quit(wk::kExitCrash, "plantage (voir [plantage] plus haut)");
 }
 
 }  // namespace
@@ -75,13 +67,14 @@ int main(int argc, char** argv) {
     wk::platform::Init();
     if (argc < 3) {
         fprintf(stderr, "usage : %s <image.bin> <default.xex patché> [dossier du jeu]\n", argv[0]);
-        wk::Quit(wk::kExitUsage, "arguments manquants", false);
+        wk::Quit(wk::kExitUsage, "arguments manquants");
     }
     if (argc > 3) wk::g_gameDir = argv[3];
     if (argc > 4) wk::g_overlayDir = argv[4];
     if (argc > 5) wk::g_dataDir = argv[5];
     wk::config::Load(wk::g_dataDir);
-    if (!wk::config::g.console) {   // option [confort] console
+    // option [confort] console (Windows) ; sous Linux, le lanceur (WAKFU_JOURNAL) veut toujours journal.txt
+    if (!wk::config::g.console || getenv("WAKFU_JOURNAL")) {
         RotateJournals(wk::g_dataDir);
         wk::platform::DetachConsole(wk::g_dataDir + "/journal.txt");
     }
@@ -90,19 +83,18 @@ int main(int argc, char** argv) {
 
     // 4 Go d'espace invité ; la table PPC_LOOKUP_FUNC tombe dedans (après l'image).
     void* mem = wk::platform::ReserveGuestMemory(0x100000000ull);
-    if (!mem) wk::Quit(wk::kExitMemory, "réservation des 4 Go de mémoire invitée impossible", false);
+    if (!mem) wk::Quit(wk::kExitMemory, "réservation des 4 Go de mémoire invitée impossible");
     wk::g_base = static_cast<uint8_t*>(mem);
-    wk::platform::WatchInit(wk::g_base);
 
     auto image = ReadFile(argv[1]);
     if (image.size() != PPC_IMAGE_SIZE) {
         fprintf(stderr, "image : %zu octets, attendu %llu\n", image.size(), (unsigned long long)PPC_IMAGE_SIZE);
-        wk::Quit(wk::kExitGameFiles, "image.bin absente ou de mauvaise taille (recompiler le jeu)", false);
+        wk::Quit(wk::kExitGameFiles, "image.bin absente ou de mauvaise taille (recompiler le jeu)");
     }
     memcpy(wk::g_base + PPC_IMAGE_BASE, image.data(), image.size());
 
     auto xex = ReadFile(argv[2]);
-    if (xex.size() < 0x18 || memcmp(xex.data(), "XEX2", 4) != 0) wk::Quit(wk::kExitGameFiles, "default.xex absent ou invalide (recompiler le jeu)", false);
+    if (xex.size() < 0x18 || memcmp(xex.data(), "XEX2", 4) != 0) wk::Quit(wk::kExitGameFiles, "default.xex absent ou invalide (recompiler le jeu)");
     uint32_t headerSize = __builtin_bswap32(*reinterpret_cast<uint32_t*>(xex.data() + 8));
     wk::g_module.xexHeaderSize = headerSize;
     wk::g_module.xexHeader = wk::Alloc(wk::Heap::Kernel, headerSize, 0x1000);

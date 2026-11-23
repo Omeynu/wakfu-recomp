@@ -1,5 +1,5 @@
 // Test unitaire du processeur PM4 : écritures mémoire selon le mode d'octets, registres scratch,
-// tampon indirect, anneau qui boucle.
+// tampon indirect, anneau qui boucle, paquets de rendu ignorés, prédication.
 #include <cstdio>
 #include "../src/guest.h"
 #include "../src/kernel/gpu_cp.h"
@@ -49,19 +49,19 @@ int main() {
     rptr = CpProcessRing(ring, sizeDw, rptr, w % sizeDw);
     CHECK(rptr == w % sizeDw);
     CHECK(Ld32(0xA0001010) == 0x99);
-    // Constantes : SET_CONSTANT type 0 (ALU, index 2 -> 0x4002), LOAD_ALU_CONSTANT (PS c253 = 0x4000 + 509*4,
-    // 4 mots lus en mémoire physique 0x3000), SET_CONSTANT type 4 (registres : 0x2000 + 0x201), SET_SHADER_CONSTANTS
-    for (uint32_t i = 0; i < 4; i++) St32(0xA0003000 + 4 * i, 0x3F800000 + i);
+    // Paquets de rendu (fait par le natif) lus sans effet : SET_CONSTANT, LOAD_ALU_CONSTANT, SET_SHADER_CONSTANTS,
+    // IM_LOAD, DRAW_INDX ; le MEM_WRITE qui suit est exécuté
     w = rptr;
     put(T3(0x2D, 3)); put(0x00000002); put(0x11); put(0x22);
     put(T3(0x2F, 3)); put(0x3000); put(0x00000000 | (509 * 4)); put(4);
-    put(T3(0x2D, 2)); put(0x00040201); put(0x707);
     put(T3(0x56, 2)); put(0x4900); put(0xB0);
+    put(T3(0x27, 2)); put(0x5000); put(8);
+    put(T3(0x22, 2)); put(0); put(0x00030004);
+    put(T3(0x3D, 2)); put(0x00001014 | 2); put(0x77);
     rptr = CpProcessRing(ring, sizeDw, rptr, w % sizeDw);
-    CHECK(CpRegister(0x4002) == 0x11 && CpRegister(0x4003) == 0x22);
-    CHECK(CpRegister(0x4000 + 509 * 4) == 0x3F800000 && CpRegister(0x4000 + 509 * 4 + 3) == 0x3F800003);
-    CHECK(CpRegister(0x2201) == 0x707);
-    CHECK(CpRegister(0x4900) == 0xB0);
+    CHECK(rptr == w % sizeDw);
+    CHECK(CpRegister(0x4002) == 0 && CpRegister(0x4900) == 0);
+    CHECK(Ld32(0xA0001014) == 0x77);
     // Prédication : masque 0x2, sélection 0x1 -> MEM_WRITE prédiqué sauté ; sélection 0x2 -> exécuté
     w = rptr;
     put(T3(0x60, 1)); put(0x2); put(T3(0x61, 1)); put(0);

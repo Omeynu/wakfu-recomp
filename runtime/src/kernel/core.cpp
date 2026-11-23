@@ -6,6 +6,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include "../config.h"
 #include "../process.h"
 #include "stub.h"
 #include "time_fields.h"
@@ -28,13 +29,13 @@ WK_IMPORT(KeBugCheck) {
     WK_TRACE(KeBugCheck);
     fprintf(stderr, "[KeBugCheck] code %08X\n", ctx.r3.u32);
     DumpRecentCalls();
-    wk::Quit(wk::kExitGameError, "erreur fatale du jeu (KeBugCheck)", false);
+    wk::Quit(wk::kExitGameError, "erreur fatale du jeu (KeBugCheck)");
 }
 WK_IMPORT(KeBugCheckEx) {
     WK_TRACE(KeBugCheckEx);
     fprintf(stderr, "[KeBugCheckEx] code %08X %08X %08X %08X %08X\n", ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32);
     DumpRecentCalls();
-    wk::Quit(wk::kExitGameError, "erreur fatale du jeu (KeBugCheckEx)", false);
+    wk::Quit(wk::kExitGameError, "erreur fatale du jeu (KeBugCheckEx)");
 }
 WK_IMPORT(DbgPrint) {
     WK_TRACE(DbgPrint);
@@ -218,13 +219,23 @@ WK_IMPORT(RtlTimeFieldsToTime) {
 }
 
 // ---------- Configuration, système ----------
+// Langue du jeu (option [jeu] langue), même valeur pour XConfig et XGetLanguage ; calculée une fois, journalisée.
+static uint32_t LangueJeu() {
+    static const uint32_t l = [] {
+        const std::string sys = config::LangueSysteme();
+        const uint32_t v = uint32_t(config::LangueXbox(config::g.langue, sys));
+        fprintf(stderr, "[langue] option %s, système « %s » -> XC_LANGUAGE %u\n", config::g.langue.c_str(), sys.c_str(), v);
+        return v;
+    }();
+    return l;
+}
 WK_IMPORT(ExGetXConfigSetting) {
     WK_TRACE(ExGetXConfigSetting);
     // (catégorie, réglage, tampon, taille, taille_requise*) ; réglages inconnus -> journal + échec
     const uint32_t cat = ctx.r3.u32, set = ctx.r4.u32, buf = ctx.r5.u32, size = ctx.r6.u32, req = ctx.r7.u32;
     fprintf(stderr, "[ExGetXConfigSetting] catégorie %u réglage %u taille %u\n", cat, set, size);
     uint32_t value = 0, len = 0;
-    if (cat == 3 && set == 9) { value = 1; len = 4; }        // langue : anglais
+    if (cat == 3 && set == 9) { value = LangueJeu(); len = 4; }   // langue
     else if (cat == 3 && set == 10) { value = 0x00040000; len = 4; }  // drapeaux vidéo : 16:9
     else if (cat == 3) { value = 0; len = 4; }
     if (!len) { Ret(ctx, STATUS_OBJECT_NAME_NOT_FOUND); return; }
@@ -232,7 +243,7 @@ WK_IMPORT(ExGetXConfigSetting) {
     if (req) St16(req, uint16_t(len));
     Ret(ctx, STATUS_SUCCESS);
 }
-WK_IMPORT(XGetLanguage) { WK_TRACE(XGetLanguage); Ret(ctx, 2); }        // XC_LANGUAGE_FRENCH ? voir journal
+WK_IMPORT(XGetLanguage) { WK_TRACE(XGetLanguage); Ret(ctx, LangueJeu()); }
 WK_IMPORT(XGetAVPack) { WK_TRACE(XGetAVPack); Ret(ctx, 6); }            // HDMI
 WK_IMPORT(XGetGameRegion) { WK_TRACE(XGetGameRegion); Ret(ctx, 0x00FF); }
 WK_IMPORT(XamGetSystemVersion) { WK_TRACE(XamGetSystemVersion); Ret(ctx, 0x20004F81); }   // 2.0.20353

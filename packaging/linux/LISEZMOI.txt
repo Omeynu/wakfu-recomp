@@ -1,18 +1,17 @@
-Islands of Wakfu recompilé — installation sous Linux (CachyOS / Arch)
+Islands of Wakfu recompilé — WakfuRecomp pour Linux
 
-1. Extraire l'archive :  tar -xf WakfuRecomp-linux.tar.zst   (crée le dossier wakfu-recomp)
-2. Lancer :              wakfu-recomp/installer.sh <jeu> <mise à jour>
-   <jeu>          : le paquet STFS du jeu (ou image ISO/XISO, ou dossier du jeu)
-   <mise à jour>  : le paquet de la Title Update 2
-   Le script installe les paquets manquants avec pacman (mot de passe sudo demandé), puis prépare le jeu,
-   le recompile et le compile (plusieurs minutes). Journal : ~/.local/share/wakfu-recomp/installation.log
-3. Jouer :               ~/.local/share/wakfu-recomp/jouer.sh   (ou « Islands of Wakfu (recompilé) » dans le menu)
+1. Extraire l'archive :  tar -xf WakfuRecomp-linux.tar.zst   (crée le dossier WakfuRecomp)
+2. Lancer :              WakfuRecomp/WakfuRecomp            (double-clic dans le gestionnaire de fichiers)
+   La fenêtre guide les étapes : Jeu (paquet STFS du jeu, ou image ISO/XISO, ou dossier ; et la Title Update 2),
+   Installation (préparation, recompilation et compilation : de quelques minutes à une heure), puis Jouer.
+   Composants manquants (clang, cmake, ninja, SDL2, Vulkan, glslang, FFmpeg) : bouton « Installer » sous
+   CachyOS / Arch (pacman, mot de passe administrateur demandé) ; autre distribution : la liste est affichée.
+3. Ensuite :             « WakfuRecomp » dans le menu des applications (créé au premier lancement).
 
-Options : --dossier <D> (autre dossier d'installation), --sans-pacman (dépendances déjà installées).
-Relancer installer.sh sans argument recompile sans re-préparer le jeu.
+Dossier : ~/.local/share/wakfu-recomp (jeu, sauvegardes et réglages dans userdata, journaux).
+Mode portable : choisi au premier lancement (tout dans wakfu-recomp, à côté du lanceur).
+Désinstaller : bouton « Désinstaller » de la fenêtre (sauvegardes gardées sauf demande ; le lanceur n'est pas touché).
 Aucun fichier du jeu n'est fourni : il faut posséder le jeu et sa mise à jour.
-Réglages : userdata/config.toml (même format que la version Windows).
-Journaux : ~/.local/share/wakfu-recomp/userdata/journal.txt (lancement en cours ; journal.1.txt, journal.2.txt avant).
-Mesure du GPU (pour améliorer les performances) : lancer
-    WAKFU_GPU_PROFIL=1 ~/.local/share/wakfu-recomp/jouer.sh
-jouer 2-3 minutes en jeu, quitter, puis envoyer userdata/journal.txt (lignes [rendu ...], [gpu ...], img/s).
+Anticrénelage MSAA (Réglages > Image) : « Auto » le coupe sur GPU intégré (portable) pour gagner en fluidité ;
+« Activé » ou « Désactivé » imposent le choix. Le GPU détecté est noté dans journal-lanceur.txt (lignes [gpu]).
+Journaux : userdata/journal.txt (jeu, lancement en cours ; journal.1.txt, journal.2.txt avant), journal-lanceur.txt.

@@ -1,11 +1,12 @@
-// Fenêtre SDL2 (présentation du tampon d'image, fermeture) et entrées de l'hôte (manette SDL, clavier).
-// Fenêtre, événements et présentation : thread du processeur de commandes. PadState : thread quelconque.
+// Fenêtre SDL2 (présentation de l'image native, fermeture) et entrées de l'hôte (manette SDL, clavier).
+// Fenêtre et événements : thread du processeur de commandes ; présentation : fil natif. PadState : thread quelconque.
 // Sans SDL2, sans écran ou fenêtre non demandée : rien n'est ouvert, PadState reste au repos.
 #pragma once
 #include <cstdint>
 #include <map>
 #include <string>
 
+typedef struct VkImage_T* VkImage;   // poignée Vulkan, sans inclure vulkan.h
 namespace wk::window {
 
 // WAKFU_WINDOW=1 : oui ; =0 : non ; absent : oui sauf capture/test (WAKFU_CAPTURE, WAKFU_STOP_AT_*, WAKFU_INPUT)
@@ -15,7 +16,7 @@ bool Wanted();
 void Open();
 bool IsOpen();                              // fenêtre créée
 void Pump();                                // événements (au plus toutes les 4 ms) ; fermeture -> sortie
-void Present(const uint32_t fetch[6]);      // constante de texture du tampon d'image -> fenêtre
+void PresentNative(VkImage image, uint32_t w, uint32_t h);   // image native (fil natif) -> fenêtre
 
 // État façon X_INPUT_GAMEPAD (boutons XINPUT, gâchettes 0-255, sticks haut = positif)
 struct Pad {

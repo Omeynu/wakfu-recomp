@@ -1,0 +1,41 @@
+name: Bug report
+description: Something does not work in the game or the installer
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not attach or link game files. Logs: `%APPDATA%\\WakfuRecomp\\journal.txt`."
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release name (e.g. v0.1.0) or commit
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: OS, GPU and driver version
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed with
+      options: [RecompLauncher, WakfuRecomp.exe (manual), Built from source]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did (menu, zone, action), what you expected, what happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: journal.txt
+      description: Attach the file, or paste its last lines
+      render: text

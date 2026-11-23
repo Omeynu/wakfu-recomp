@@ -8,14 +8,14 @@ set(GEN_DIR "" CACHE PATH "Dossier des fichiers générés par runtime/tools/gen
 # Bibliothèque du C++ généré (mêmes options que la vérification)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../check ${CMAKE_BINARY_DIR}/ppc)
 
-# Options du joueur : toml++ de XenonRecomp (en-têtes seulement), comme fmt et simde
+# Options du joueur : toml++ de XenonRecomp (en-têtes seulement), comme simde
 set(TOMLPP_INCLUDE "${SIMDE_DIR}/../tomlplusplus/include")
-set(XXHASH_INCLUDE "${SIMDE_DIR}/../xxHash")   # empreintes des textures (XXH3)
+set(XXHASH_INCLUDE "${SIMDE_DIR}/../xxHash")   # empreintes des shaders (XXH3)
 
 add_executable(wakfu
-    src/main.cpp src/config.cpp src/game_log.cpp src/guest.cpp src/process.cpp src/platform.cpp
+    src/main.cpp src/config.cpp src/game_log.cpp src/d3d_lock.cpp src/d3d_ombre.cpp src/guest.cpp src/process.cpp src/platform.cpp
     src/kernel/stub.cpp src/kernel/variables.cpp src/kernel/core.cpp
-    src/kernel/sync.cpp src/kernel/threads.cpp src/kernel/gpu.cpp src/kernel/files.cpp src/kernel/xam.cpp src/kernel/profile.cpp src/kernel/xma.cpp src/kernel/audio_out.cpp src/kernel/strings.cpp src/kernel/format.cpp src/kernel/gpu_cp.cpp src/kernel/frontbuffer.cpp src/kernel/window.cpp src/png.cpp src/gpu/texture_decode.cpp
+    src/kernel/sync.cpp src/kernel/threads.cpp src/kernel/gpu.cpp src/kernel/files.cpp src/kernel/xam.cpp src/kernel/profile.cpp src/kernel/xma.cpp src/kernel/audio_out.cpp src/kernel/strings.cpp src/kernel/format.cpp src/kernel/gpu_cp.cpp src/kernel/window.cpp src/png.cpp
     ${GEN_DIR}/imports_stub.cpp)
 target_include_directories(wakfu PRIVATE src "${PPC_DIR}" "${SIMDE_DIR}" "${GEN_DIR}" "${TOMLPP_INCLUDE}" "${XXHASH_INCLUDE}")
 target_compile_options(wakfu PRIVATE -O2 -g -fno-strict-aliasing -ffp-model=strict -march=sandybridge -Wall -Wno-unused-function)
@@ -45,6 +45,26 @@ if(WIN32)
     target_link_options(wakfu_unit_gpu_cp PRIVATE -static -fuse-ld=lld)
 endif()
 
+# Rendu natif B3 : déclarations de sommets 360 -> Vulkan, conversion des octets
+add_executable(wakfu_unit_natif_sommets tests/unit_natif_sommets.cpp src/natif/sommets.cpp src/guest.cpp src/platform.cpp)
+target_include_directories(wakfu_unit_natif_sommets PRIVATE src "${PPC_DIR}" "${SIMDE_DIR}" ${CMAKE_BINARY_DIR}/vulkan-headers)
+target_compile_options(wakfu_unit_natif_sommets PRIVATE -O1 -g -march=sandybridge)
+if(WIN32)
+    target_link_options(wakfu_unit_natif_sommets PRIVATE -static -fuse-ld=lld)
+endif()
+
+# Raccord du rendu natif (B3) sur GPU : wakfu_unit_natif_raccord <conteneurs .xvu/.xpu> <dossier SPIR-V précompilé>
+add_executable(wakfu_unit_natif_raccord tests/unit_natif_raccord.cpp src/natif/raccord.cpp src/natif/sommets.cpp
+               src/natif/tampons.cpp src/gpu/vk.cpp src/config.cpp src/guest.cpp src/platform.cpp)
+target_include_directories(wakfu_unit_natif_raccord PRIVATE src "${PPC_DIR}" "${SIMDE_DIR}" ${VULKAN_HEADERS_DIR}
+                           "${TOMLPP_INCLUDE}" "${XXHASH_INCLUDE}")
+target_compile_options(wakfu_unit_natif_raccord PRIVATE -O1 -g -march=sandybridge)
+if(WIN32)
+    target_link_options(wakfu_unit_natif_raccord PRIVATE -static -fuse-ld=lld)
+else()
+    target_link_libraries(wakfu_unit_natif_raccord PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
 # Socle Vulkan (chargement dynamique ; en-têtes Vulkan requis)
 # En-têtes Vulkan seuls, recopiés à part (éviter d'ajouter /usr/include entier en compilation croisée)
 find_path(VULKAN_SYS_INCLUDE vulkan/vulkan.h PATHS /usr/include NO_CMAKE_FIND_ROOT_PATH)
@@ -58,29 +78,24 @@ else()
     target_link_libraries(wakfu_unit_vk PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
-# Analyse du microcode Xenos (fichiers repris de Xenia, BSD) ; fmt en en-têtes seuls (copie de XenonRecomp)
-set(XENIA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/xenia)
-set(XENIA_FMT_ROOT ${CMAKE_BINARY_DIR}/xenia-fmt)
-file(COPY ${SIMDE_DIR}/../fmt/include DESTINATION ${XENIA_FMT_ROOT}/third_party/fmt)
-add_library(xenia_ucode STATIC
-    ${XENIA_DIR}/src/xenia/gpu/ucode.cc ${XENIA_DIR}/src/xenia/gpu/xenos.cc ${XENIA_DIR}/src/xenia/gpu/shader.cc
-    ${XENIA_DIR}/src/xenia/gpu/shader_translator.cc ${XENIA_DIR}/src/xenia/gpu/shader_translator_disasm.cc
-    ${XENIA_DIR}/src/xenia/gpu/registers.cc ${XENIA_DIR}/src/xenia/base/string_buffer.cc ${XENIA_DIR}/shims.cpp)
-target_include_directories(xenia_ucode PUBLIC ${XENIA_DIR}/src ${XENIA_FMT_ROOT} ${XENIA_FMT_ROOT}/third_party/fmt/include)
-target_compile_definitions(xenia_ucode PUBLIC FMT_HEADER_ONLY NDEBUG)   # assertions de débogage de Xenia désactivées, comme ses builds de production
-target_compile_options(xenia_ucode PRIVATE -O2 -w)
+# Traduction des états D3D -> Vulkan du rendu natif (B3)
+add_executable(wakfu_unit_natif_etats tests/unit_natif_etats.cpp src/natif/etats.cpp)
+target_include_directories(wakfu_unit_natif_etats PRIVATE src ${VULKAN_HEADERS_DIR})
+target_compile_options(wakfu_unit_natif_etats PRIVATE -O1 -g -Wall)
+if(WIN32)
+    target_link_options(wakfu_unit_natif_etats PRIVATE -static -fuse-ld=lld)
+endif()
 
-# Traducteur Xenos -> GLSL -> SPIR-V (glslang). Sous Windows : glslang de MSYS2, ou en compilation croisée
+# Rendu natif ; glslang compile les shaders GLSL de la présentation (post-traitement, FSR 1). Sous Windows : glslang de MSYS2, ou en compilation croisée
 # glslang construit pour MinGW et désigné par -Dglslang_DIR=<préfixe>/lib/cmake/glslang (docs/build-windows.md).
 find_package(glslang CONFIG)
 if(NOT glslang_FOUND)
     message(STATUS "glslang introuvable : runtime compilé sans rendu (WAKFU_HAS_SHADERGEN absent)")
 endif()
 if(glslang_FOUND)
-    add_library(wakfu_shadergen STATIC src/gpu/glsl_translator.cpp)
+    add_library(wakfu_shadergen STATIC src/gpu/vk.cpp src/gpu/present.cpp src/gpu/fsr1.cpp src/natif/sommets.cpp src/natif/tampons.cpp)
     target_include_directories(wakfu_shadergen PUBLIC src)
-    target_link_libraries(wakfu_shadergen PUBLIC xenia_ucode glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
-    target_sources(wakfu_shadergen PRIVATE src/gpu/shader_cache.cpp src/gpu/renderer.cpp src/gpu/vk.cpp src/gpu/present.cpp src/gpu/fsr1.cpp)
+    target_link_libraries(wakfu_shadergen PUBLIC glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits)
     # AMD FidelityFX FSR 1.0.2 (MIT, docs/provenance.md) : en-têtes GLSL intégrés au programme en chaînes brutes
     set(FSR1_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fidelityfx-fsr1)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${FSR1_DIR}/ffx_a.h ${FSR1_DIR}/ffx_fsr1.h)
@@ -94,17 +109,17 @@ if(glslang_FOUND)
     target_include_directories(wakfu_shadergen PUBLIC ${VULKAN_HEADERS_DIR} "${PPC_DIR}" "${SIMDE_DIR}" "${XXHASH_INCLUDE}")
     target_compile_options(wakfu_shadergen PRIVATE -march=sandybridge)
     target_link_libraries(wakfu_shadergen PUBLIC ${CMAKE_DL_LIBS})
-    add_executable(wakfu_shaders tools/shader_tool.cpp)
-    target_link_libraries(wakfu_shaders PRIVATE wakfu_shadergen)
     target_link_libraries(wakfu PRIVATE wakfu_shadergen)
     target_compile_definitions(wakfu PRIVATE WAKFU_HAS_SHADERGEN)
-    # Décodage des textures : calcul GPU comparé au décodage CPU (pilote choisi par VK_ICD_FILENAMES)
-    add_executable(wakfu_unit_texdecode tests/unit_texdecode.cpp src/gpu/texture_decode.cpp src/config.cpp)
-    target_include_directories(wakfu_unit_texdecode PRIVATE src "${PPC_DIR}" "${SIMDE_DIR}" "${XXHASH_INCLUDE}" "${TOMLPP_INCLUDE}")
-    target_compile_options(wakfu_unit_texdecode PRIVATE -O1 -g -march=sandybridge)
-    target_link_libraries(wakfu_unit_texdecode PRIVATE wakfu_shadergen)
+    # Rendu natif : cœur (device), états, raccord (shaders précompilés, sommets), textures
+    target_sources(wakfu PRIVATE src/natif/device.cpp src/natif/etats.cpp src/natif/raccord.cpp src/natif/textures.cpp)
+    # N1 : détuilage / conversion / mips du cache de textures natif (sans GPU)
+    add_executable(wakfu_unit_natif_textures tests/unit_natif_textures.cpp src/natif/textures.cpp src/config.cpp)
+    target_include_directories(wakfu_unit_natif_textures PRIVATE src "${PPC_DIR}" "${SIMDE_DIR}" "${XXHASH_INCLUDE}" "${TOMLPP_INCLUDE}")
+    target_compile_options(wakfu_unit_natif_textures PRIVATE -O1 -g -march=sandybridge)
+    target_link_libraries(wakfu_unit_natif_textures PRIVATE wakfu_shadergen)
     if(WIN32)
-        target_link_options(wakfu_unit_texdecode PRIVATE -static -fuse-ld=lld)
+        target_link_options(wakfu_unit_natif_textures PRIVATE -static -fuse-ld=lld)
     endif()
 endif()
 
@@ -142,12 +157,6 @@ endif()
 add_executable(wakfu_unit_config tests/unit_config.cpp src/config.cpp)
 target_include_directories(wakfu_unit_config PRIVATE src "${TOMLPP_INCLUDE}")
 target_compile_options(wakfu_unit_config PRIVATE -O1 -g)
-add_executable(wakfu_unit_watch tests/unit_watch.cpp src/platform.cpp)
-target_include_directories(wakfu_unit_watch PRIVATE src)
-target_compile_options(wakfu_unit_watch PRIVATE -O1 -g)
-if(WIN32)
-    target_link_options(wakfu_unit_watch PRIVATE -static -fuse-ld=lld)
-endif()
 add_executable(wakfu_unit_time tests/unit_time.cpp)
 target_compile_options(wakfu_unit_time PRIVATE -O1 -g)
 add_executable(wakfu_unit_strings tests/unit_strings.cpp src/guest.cpp src/platform.cpp src/kernel/format.cpp)

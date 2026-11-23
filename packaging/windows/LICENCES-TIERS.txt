@@ -17,7 +17,7 @@ XenonRecomp (patché)          commit ddd128bc        MIT                       
   TinySHA1, tiny-AES-c                               licence type BSD / Unlicense
   libmspack                   1.11                   LGPL-2.1                         décompression LZX (dans XenonRecomp.exe
                                                                                         et wakfu-prepare.exe, liaison statique)
-glslang                       15.1.0                 BSD-3 / BSD-2 / MIT / Apache-2.0 traduction des shaders (lié à wakfu.exe)
+glslang                       15.1.0                 BSD-3 / BSD-2 / MIT / Apache-2.0 shaders de présentation (lié à wakfu.exe)
 SDL2                          2.32.10                zlib                             fenêtre, son, manette (lié à wakfu.exe)
                                                                                         et fenêtre du lanceur (amorce)
 FFmpeg (libavcodec, libavutil) 7.1.2                 LGPL-2.1 ou ultérieure           décodage XMA (lié statiquement à wakfu.exe)
@@ -25,8 +25,12 @@ Vulkan-Headers                1.4.309                Apache-2.0 / MIT           
 zstd                          1.5.7                  BSD-3-Clause                     décompression de l'archive (amorce)
 Dear ImGui                    1.93.0                 MIT                              fenêtre du lanceur (amorce)
 Inter (police)                4.1                    SIL Open Font License 1.1        textes de la fenêtre (amorce)
-Xenia (extraits src/xenia/gpu) voir licences/xenia    BSD-3-Clause                     analyse du microcode GPU (sources)
+Xenia (code adapté)           voir licences/xenia    BSD-3-Clause                     mise en page des textures (sources)
 AMD FidelityFX FSR 1          1.0.2                  MIT                              agrandissement de l'image (option fsr1)
+XenosRecomp                   commit 70a084c2        MIT                              shaders Xenos -> HLSL (rendu natif)
+  smol-v, fmt, xxHash, zstd                          MIT / MIT / BSD-2 / BSD-3        (liés statiquement à XenosRecomp.exe)
+DirectXShaderCompiler (DXC)   1.9.2609 (Microsoft)   NCSA (University of Illinois) /  HLSL -> SPIR-V (rendu natif ; binaires
+                                                       MIT                              officiels dxc.exe, dxcompiler.dll)
 
 LGPL (FFmpeg, libmspack) : les sources exactes sont publiques (URL et sommes dans packaging/windows/deps.lock
 du dépôt, options de FFmpeg ci-dessous). La liaison est statique, mais la reliaison avec une autre version est

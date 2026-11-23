@@ -4,10 +4,16 @@
 // exécutées dans un fil de travail ; leur sortie va dans <dossier de travail>\journal-lanceur.txt.
 // Illustrations (KeyArt.png, Background.png) : lues dans la copie du jeu du joueur, jamais distribuées.
 #define SDL_MAIN_HANDLED
+#ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
 #include <wincodec.h>
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#include <zlib.h>
+#endif
 #include <SDL.h>
 #include <SDL_syswm.h>
 #include <imgui.h>
@@ -121,7 +127,17 @@ SuiviFenetre g_suiviFenetre;
 
 void journal(const std::string& s) { g_suiviFenetre.ligne(s); }
 
-// ---- Ressources : police Inter (wakfu-installer.rc), images du jeu (WIC, composant de Windows) ----
+FILE* ouvrirJournal(const fs::path& p)
+{
+#ifdef _WIN32
+    return _wfopen(p.c_str(), L"ab");
+#else
+    return std::fopen(p.c_str(), "ab");
+#endif
+}
+
+// ---- Ressources : police Inter (Windows : wakfu-installer.rc ; Linux : #embed), images du jeu (WIC ; Linux : zlib) ----
+#ifdef _WIN32
 ImFont* policeRessource(const wchar_t* nom)
 {
     HRSRC r = FindResourceW(nullptr, nom, MAKEINTRESOURCEW(10) /* RT_RCDATA */);
@@ -133,9 +149,86 @@ ImFont* policeRessource(const wchar_t* nom)
     c.OversampleH = 2;
     return ImGui::GetIO().Fonts->AddFontFromMemoryTTF(p, int(SizeofResource(nullptr, r)), kTexteTaille, &c);
 }
+#else
+const unsigned char kInterRegular[] = {
+#embed "Inter-Regular.ttf"
+};
+const unsigned char kInterSemiBold[] = {
+#embed "Inter-SemiBold.ttf"
+};
+ImFont* policeRessource(const unsigned char* p, size_t n)
+{
+    ImFontConfig c;
+    c.FontDataOwnedByAtlas = false;   // données du programme : ni copiées ni libérées
+    c.OversampleH = 2;
+    return ImGui::GetIO().Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(p), int(n), kTexteTaille, &c);
+}
+#endif
 
 struct Image { SDL_Texture* tex = nullptr; int w = 0, h = 0; };
 
+#ifndef _WIN32
+// PNG 8 bits RVB ou RVBA, non entrelacé (images du jeu) -> RVBA ; vide si autre format ou fichier endommagé
+std::vector<uint8_t> lirePng(const fs::path& p, uint32_t& w, uint32_t& h)
+{
+    std::ifstream f(p, std::ios::binary);
+    std::vector<uint8_t> b{ std::istreambuf_iterator<char>(f), {} }, z, px;
+    auto be = [&](size_t o) { return uint32_t(b[o]) << 24 | uint32_t(b[o + 1]) << 16 | uint32_t(b[o + 2]) << 8 | b[o + 3]; };
+    if (b.size() < 33 || std::memcmp(b.data(), "\x89PNG\r\n\x1a\n", 8) != 0 || std::memcmp(&b[12], "IHDR", 4) != 0) return {};
+    w = be(16), h = be(20);
+    const int type = b[25];
+    if (b[24] != 8 || (type != 2 && type != 6) || b[28] != 0 || w == 0 || h == 0 || w > 8192 || h > 8192) return {};
+    for (size_t o = 8; o + 12 <= b.size();)
+    {
+        uint32_t n = be(o);
+        if (n > b.size() - o - 12) return {};
+        if (std::memcmp(&b[o + 4], "IDAT", 4) == 0) z.insert(z.end(), b.begin() + o + 8, b.begin() + o + 8 + n);
+        o += 12 + size_t(n);
+    }
+    const size_t bpp = type == 6 ? 4 : 3, ligne = size_t(w) * bpp;
+    std::vector<uint8_t> raw((ligne + 1) * h);
+    uLongf lg = uLongf(raw.size());
+    if (uncompress(raw.data(), &lg, z.data(), uLong(z.size())) != Z_OK || lg != raw.size()) return {};
+    std::vector<uint8_t> prec(ligne, 0), cur(ligne);
+    px.resize(size_t(w) * h * 4);
+    for (uint32_t y = 0; y < h; ++y)
+    {
+        const uint8_t* s = &raw[y * (ligne + 1)];
+        for (size_t i = 0; i < ligne; ++i)
+        {
+            int a = i >= bpp ? cur[i - bpp] : 0, u = prec[i], c = i >= bpp ? prec[i - bpp] : 0, v = s[1 + i];
+            switch (s[0])
+            {
+            case 0: break;
+            case 1: v += a; break;
+            case 2: v += u; break;
+            case 3: v += (a + u) / 2; break;
+            case 4: { int q = a + u - c, pa = std::abs(q - a), pb = std::abs(q - u), pc = std::abs(q - c);
+                      v += pa <= pb && pa <= pc ? a : pb <= pc ? u : c; break; }
+            default: return {};
+            }
+            cur[i] = uint8_t(v);
+        }
+        for (uint32_t x = 0; x < w; ++x)
+            for (int k = 0; k < 4; ++k) px[(size_t(y) * w + x) * 4 + k] = k < int(bpp) ? cur[x * bpp + k] : 255;
+        std::swap(prec, cur);
+    }
+    return px;
+}
+
+Image chargerImage(SDL_Renderer* ren, const fs::path& p)
+{
+    Image im;
+    std::error_code ec;
+    if (!fs::exists(p, ec)) return im;
+    uint32_t w = 0, h = 0;
+    std::vector<uint8_t> px = lirePng(p, w, h);
+    if (!px.empty()) im.tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, int(w), int(h));
+    if (im.tex) { SDL_UpdateTexture(im.tex, nullptr, px.data(), int(w * 4)); SDL_SetTextureBlendMode(im.tex, SDL_BLENDMODE_BLEND); im.w = int(w), im.h = int(h); }
+    else journal("image illisible : " + u8(p));
+    return im;
+}
+#else
 Image chargerImage(SDL_Renderer* ren, const fs::path& p)
 {
     Image im;
@@ -167,6 +260,7 @@ Image chargerImage(SDL_Renderer* ren, const fs::path& p)
         if (u) u->Release();
     return im;
 }
+#endif
 
 // ---- Petits éléments d'interface ----
 bool bouton(const char* label, bool primaire, ImVec2 taille = ImVec2(0, 0), bool actif = true)
@@ -309,8 +403,8 @@ bool debutCarte(const char* id, ImVec2 pos, ImVec2 taille, uint32_t fond = kCart
 void finCarte() { ImGui::EndChild(); }
 
 // ---- Application ----
-enum class Ecran { Accueil, Choix, Verification, Progression, Reglages, Jouer, Fatale };
-enum class Job { Aucun, Verification, Construction };
+enum class Ecran { Accueil, Choix, Verification, Progression, Reglages, Jouer, Fatale, Anciennes, Desinstaller, Desinstalle };
+enum class Job { Aucun, Verification, Construction, Suppression };
 
 struct Fichier { fs::path p; bool ok = false; std::string erreur; };
 
@@ -362,6 +456,13 @@ struct App
     int conflits = 0;
     std::string erreurCopie;
     ImVec2 zoneMin[2], zoneMax[2];   // zones de dépôt « Jeu » et « Mise à jour » (coordonnées de la fenêtre)
+    bool garderCompilation = false;  // ménage après installation sauf si coché
+    bool iconeBureau = false;        // icône du bureau créée à la fin de l'installation si cochée
+    std::vector<std::string> manquants;   // Linux : dépendances système manquantes (échec de la vérification)
+    std::vector<Ancienne> anciennes;      // anciennes installations proposées à la suppression (une fois)
+    bool anciennesRepondu = false;        // « Supprimer » ou « Pas maintenant » : marqueur .anciennes-vues écrit
+    std::vector<std::pair<fs::path, uint64_t>> listeDesinst;   // ce que la désinstallation supprime (affiché avant)
+    bool effacerSauvegardes = false, confirmerSauvegardes = false;
 
     // ---- Travail en arrière-plan ----
     void lancer(Job j, std::function<void()> f)
@@ -385,17 +486,18 @@ struct App
         });
     }
 
-    void verifier()
+    void verifier(bool installerDeps = false)
     {
         ecran = Ecran::Verification;
         verifOk = false, dejaPrepare = false;
         gb = freeGb(in.D);
         std::vector<fs::path> entrees = { jeu.p, maj.p };
-        lancer(Job::Verification, [this, entrees] {
+        lancer(Job::Verification, [this, entrees, installerDeps] {
+            if (installerDeps) installerDependances();
             ensureTools(in);
             if (!prepareGame(in, entrees))   // wakfu-prepare, code 3 : SHA-1 de l'image non reconnu
             {
-                fs::remove_all(in.G);   // copie refusée : le choix des fichiers est à refaire
+                supprimerDans(in.D, in.G);   // copie refusée : le choix des fichiers est à refaire
                 { std::lock_guard l(g_t.m); g_t.mauvaiseCopie = true; }
                 throw Error("SHA-1 de l'image (jeu + mise à jour) différent de celui attendu par config/wakfu.toml");
             }
@@ -410,6 +512,8 @@ struct App
             ensureTools(in);
             prepareGame(in, {});
             buildGame(in);
+            if (!garderCompilation) menage(in);
+            else journal("ménage : fichiers de compilation gardés (case cochée)");
         });
     }
 
@@ -429,6 +533,12 @@ struct App
             ecran = Ecran::Choix;
         }
         if (j == Job::Verification && !echec) { verifOk = true; chargerImages(); construire(false); }   // « Recompiler »
+        if (j == Job::Verification && echec && !mauvaise) manquants = dependancesManquantes();
+        if (j == Job::Suppression && ecran == Ecran::Anciennes && !echec) finAnciennes();
+        if (j == Job::Suppression && ecran == Ecran::Desinstaller && !echec) ecran = Ecran::Desinstalle;
+        if (j == Job::Construction && !echec && iconeBureau)
+            try { creerRaccourci(raccourciBureau(), in); journal("icône du bureau : " + u8(raccourciBureau())); }
+            catch (const std::exception& e) { journal(std::string("ERREUR : ") + e.what()); }
         if (j == Job::Construction && !echec)
         {
             chargerReglages();
@@ -484,6 +594,7 @@ struct App
 
     void jouer()
     {
+        if (in.D.empty() || data.empty()) return;   // dossier pas encore ouvert : rien à écrire (chemins relatifs sinon)
         if (!enregistrerReglages()) return;
         messageJeu.clear();
         jeuEnCours = true;
@@ -491,7 +602,7 @@ struct App
         if (fil.joinable()) fil.join();
         fil = std::thread([this] {
             int rc;
-            try { rc = launchGame(in.D); }
+            try { rc = launchGame(in); }
             catch (const std::exception& e) { journal(std::string("ERREUR : ") + e.what()); rc = -1; }
             journal(fmt("wakfu.exe : code de sortie %d", rc));
             codeJeu = rc;
@@ -575,6 +686,7 @@ struct App
         choisirFichier(p, voulu, true);
     }
 
+#ifdef _WIN32
     void parcourir(int voulu)
     {
         wchar_t nom[4096] = L"";
@@ -593,6 +705,44 @@ struct App
     }
 
     void ouvrir(const fs::path& p) { ShellExecuteW(nullptr, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL); }
+#else
+    // Sélecteur de fichiers du bureau (zenity : GNOME et autres ; kdialog : KDE) ; sinon glisser-déposer
+    static std::string sortieCommande(const std::vector<std::string>& args)
+    {
+        int fd[2];
+        if (pipe(fd) != 0) return {};
+        std::vector<char*> v;
+        for (auto& a : args) v.push_back(const_cast<char*>(a.c_str()));
+        v.push_back(nullptr);
+        pid_t pid = fork();
+        if (pid == 0) { dup2(fd[1], 1); close(fd[0]); close(fd[1]); execvp(v[0], v.data()); _exit(127); }
+        close(fd[1]);
+        std::string r;
+        char b[4096];
+        ssize_t n;
+        while (pid > 0 && (n = read(fd[0], b, sizeof b)) > 0) r.append(b, size_t(n));
+        close(fd[0]);
+        int st = 0;
+        if (pid > 0) waitpid(pid, &st, 0);
+        if (pid <= 0 || !WIFEXITED(st) || WEXITSTATUS(st) != 0) return {};
+        while (!r.empty() && r.back() == '\n') r.pop_back();
+        return r;
+    }
+
+    void parcourir(int voulu)
+    {
+        const std::string t = tr(voulu == 0 ? T_DialogueJeu : T_DialogueMaj);
+        std::string r = sortieCommande({ "zenity", "--file-selection", "--title=" + t });
+        if (r.empty()) r = sortieCommande({ "kdialog", "--getopenfilename", ".", "--title", t });
+        if (!r.empty()) choisirFichier(fromU8(r), voulu);
+        else refus = tr(T_PasDeSelecteur);
+    }
+
+    void ouvrir(const fs::path& p)
+    {
+        if (fork() == 0) { setsid(); execlp("xdg-open", "xdg-open", p.c_str(), (char*)nullptr); _exit(127); }
+    }
+#endif
 
     // ---- Dessin ----
     void dessinerFond()
@@ -725,7 +875,11 @@ struct App
         return t;
     }
 
+#ifdef _WIN32
     static std::string cheminWin(fs::path p) { std::string d = u8(p); std::replace(d.begin(), d.end(), '/', '\\'); return d; }
+#else
+    static std::string cheminWin(fs::path p) { return u8(p); }
+#endif
 
     void commencer()
     {
@@ -817,7 +971,7 @@ struct App
             if (carteMode("##normal", tr(T_InstNormale), tr(T_Recommande), tr(T_InstNormaleAide), !modePortable, cw, ch))
                 modePortable = false, refusPortable.clear();
             ImGui::SameLine(0, S(16));
-            std::string aide = fmt(tr(T_InstPortableAide), cheminWin(selfPath().parent_path() / "WakfuRecomp").c_str());
+            std::string aide = fmt(tr(T_InstPortableAide), cheminWin(portableDir()).c_str());
             if (carteMode("##portable", tr(T_InstPortable), nullptr, aide, modePortable, cw, ch) && !modePortable) choisirPortable();
             ImGui::Dummy(ImVec2(0, S(6)));
             if (!refusPortable.empty())
@@ -961,7 +1115,7 @@ struct App
             std::string t = decimale(fmt(tr(gb < 3 ? T_VerifEspaceBas : T_VerifEspace), gb));
             ligneEtat(gb < 3 ? Icone::Attention : Icone::Ok, t.c_str());
         }
-        if (!dejaPrepare && !echec)
+        if (!dejaPrepare && !echec && !fini)   // une fois la copie validée : place pour les cases de l'installation
         {
             auto etat = [&](Etape x) {
                 if (fini || (int)e > x) return Icone::Ok;
@@ -975,7 +1129,17 @@ struct App
             ligneEtat(fini ? Icone::Ok : (echec && mauvaise) ? Icone::Erreur : Icone::Attente, tr(T_VerifVersion));
         }
         ImGui::Dummy(ImVec2(0, S(echec ? 0 : 12)));
-        if (echec)
+        if (echec && !manquants.empty())   // Linux : composants du système à installer
+        {
+            std::string l;
+            for (auto& m : manquants) l += (l.empty() ? "" : ", ") + m;
+            const bool pacman = pacmanDisponible();
+            panneauErreur(tr(T_DepTitre), tr(pacman ? T_DepPacman : T_DepAutre), l, fin);
+            int b = piedCarte(tr(T_OuvrirJournal), tr(pacman ? T_Installer : T_Reessayer));
+            if (b == 1) ouvrir(journalPath);
+            if (b == 2) { manquants.clear(); verifier(pacman); }
+        }
+        else if (echec)
         {
             panneauErreur(tr(T_VerifEchec), nullptr, erreur, fin);
             int b = piedCarte(tr(T_OuvrirJournal), tr(T_AutresFichiers));
@@ -990,6 +1154,8 @@ struct App
             police(g_regular, 16);
             ImGui::TextWrapped("%s", tr(T_VerifOkDetail));
             finPolice();
+            ImGui::Dummy(ImVec2(0, S(10)));
+            casesInstallation();
             if (piedCarte(dejaPrepare ? nullptr : tr(T_Retour), tr(T_LancerRecompilation)) == 2) construire(false);
         }
         finCarte();
@@ -1143,8 +1309,6 @@ struct App
             std::snprintf(b, sizeof b, "%s", c.gpu.c_str());
             if (ImGui::InputTextWithHint("##gpu", tr(T_GpuAuto), b, sizeof b)) c.gpu = b;
         }
-        ligneReglage(tr(T_Echelle), tr(T_EchelleAide));
-        liste<int>("##echelle", &c.renderScale, { { 1, "x1" }, { 2, "x2" }, { 3, "x3" }, { 4, "x4" } });
         ImGui::EndTable();
     }
 
@@ -1154,6 +1318,8 @@ struct App
         colonnes();
         ligneReglage(tr(T_Anticrenelage), tr(T_AnticrenelageAide));
         liste<std::string>("##aa", &c.antiAliasing, { { "aucun", tr(T_AaAucun) }, { "fxaa", "FXAA" } });
+        ligneReglage(tr(T_Msaa), tr(T_MsaaAide));
+        liste<std::string>("##msaa", &c.msaa, { { "auto", tr(T_MsaaAuto) }, { "active", tr(T_Active) }, { "desactive", tr(T_Desactive) } });
         ligneReglage(tr(T_Agrandissement), tr(T_AgrandissementAide));
         liste<std::string>("##agr", &c.upscale, { { "lineaire", tr(T_AgrLineaire) }, { "fsr1", "AMD FSR 1" } });
         ligneReglage(tr(T_Nettete), tr(T_NetteteAide));
@@ -1164,8 +1330,6 @@ struct App
         ImGui::SliderFloat("##gamma", &c.gamma, 0.5f, 3.0f, "%.2f");
         ligneReglage(tr(T_CouleurXbox), tr(T_CouleurXboxAide));
         ImGui::Checkbox("##xbox", &c.xboxColor);
-        ligneReglage(tr(T_Anisotrope), tr(T_AnisotropeAide));
-        liste<int>("##aniso", &c.anisotropy, { { 1, tr(T_Desactive) }, { 2, "x2" }, { 4, "x4" }, { 8, "x8" }, { 16, "x16" } });
         ImGui::EndTable();
     }
 
@@ -1182,6 +1346,9 @@ struct App
         ImGui::Checkbox("##fond", &c.backgroundInput);
         ligneReglage(tr(T_PasserLogos), tr(T_PasserLogosAide));
         ImGui::Checkbox("##logos", &c.skipLogos);
+        ligneReglage(tr(T_Langue), tr(T_LangueAide));
+        liste<std::string>("##langue", &c.langue, { { "auto", tr(T_LangueAuto) }, { "fr", "Français" }, { "en", "English" },
+            { "de", "Deutsch" }, { "es", "Español" }, { "it", "Italiano" }, { "ja", "Japanese" } });
         ligneReglage(tr(T_Console), tr(T_ConsoleAide));
         ImGui::Checkbox("##console", &c.console);
         ImGui::EndTable();
@@ -1327,6 +1494,8 @@ struct App
         if (bouton(tr(T_Reglages), false, ImVec2(bw, S(46)))) { chargerReglages(); retourReglages = Ecran::Jouer; ecran = Ecran::Reglages; }
         ImGui::SameLine(0, S(12));
         if (bouton(tr(T_Recompiler), false, ImVec2(bw, S(46)))) confirmerRecompilation = true;
+        ImGui::Dummy(ImVec2(0, S(2)));
+        if (bouton(tr(T_Desinstaller), false, ImVec2(S(320), S(40)))) preparerDesinstallation();
         ImGui::Dummy(ImVec2(0, S(26)));
         if (!aJour && messageJeu.empty()) { icone(Icone::Attention); texteCouleur(kJaune, tr(T_NouvelleVersion), nullptr, 15); }
         if (!messageJeu.empty())
@@ -1347,6 +1516,183 @@ struct App
         ImGui::PopTextWrapPos();
     }
 
+    // Étapes de la fenêtre (en haut à droite) : Jeu -> Installation -> Jouer
+    void etapes()
+    {
+        const int cur = ecran == Ecran::Verification || ecran == Ecran::Progression ? 1 : 0;
+        const Texte noms[3] = { T_EtapeJeu, T_EtapeInstallation, T_EtapeJouer };
+        police(g_semibold, 14);
+        float w = 0;
+        for (int i = 0; i < 3; ++i) w += ImGui::CalcTextSize(fmt("%d  %s", i + 1, tr(noms[i])).c_str()).x + (i ? S(40) : 0);
+        ImVec2 p(tailleFenetre().x - S(40) - w, S(38));
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 o = ImGui::GetWindowPos();
+        for (int i = 0; i < 3; ++i)
+        {
+            std::string t = fmt("%d  %s", i + 1, tr(noms[i]));
+            uint32_t c = i < cur ? kVert : i == cur ? kOrangeClair : kTexteDoux;
+            dl->AddText(ImVec2(o.x + p.x, o.y + p.y), u32(c, i > cur ? 0.6f : 1.0f), t.c_str());
+            p.x += ImGui::CalcTextSize(t.c_str()).x;
+            if (i < 2) dl->AddLine(ImVec2(o.x + p.x + S(10), o.y + p.y + S(9)), ImVec2(o.x + p.x + S(30), o.y + p.y + S(9)), u32(kBord), S(1.5f));
+            p.x += S(40);
+        }
+        finPolice();
+    }
+
+    void caseGarder()
+    {
+        police(g_regular, 15);
+        ImGui::Checkbox(tr(T_GarderCompilation), &garderCompilation);
+        finPolice();
+        ImGui::Indent(S(36));
+        texteDoux(tr(T_GarderCompilationAide), 13);
+        ImGui::Unindent(S(36));
+    }
+
+    void casesInstallation()   // avant la recompilation : ménage, icône du bureau (mode normal)
+    {
+        caseGarder();
+        if (portableMode()) return;
+        police(g_regular, 15);
+        ImGui::Checkbox(tr(T_IconeBureau), &iconeBureau);
+        finPolice();
+    }
+
+    std::string taille(uint64_t o) { return decimale(fmt(tr(T_TailleGo), o / 1073741824.0)); }
+
+    // ---- Anciennes installations (proposées une fois) ----
+    void finAnciennes()
+    {
+        anciennesRepondu = true;
+        anciennes.clear();
+        demarrerSuite();
+    }
+
+    void ecranAnciennes()
+    {
+        carte("anciennes");
+        titre(tr(T_AnciennesTitre));
+        ImGui::Dummy(ImVec2(0, S(6)));
+        texteDoux(tr(T_AnciennesIntro), 16);
+        ImGui::Dummy(ImVec2(0, S(14)));
+        bool enCours, echec;
+        std::string erreur;
+        std::deque<std::string> fin;
+        { std::lock_guard l(g_t.m); enCours = job == Job::Suppression; echec = g_t.echec; erreur = g_t.erreur; fin = g_t.fin; }
+        for (auto& a : anciennes)
+            ligneEtat(enCours ? Icone::EnCours : Icone::Attention, (cheminWin(a.dossier) + "   " + taille(a.taille)).c_str());
+        if (echec && !enCours) panneauErreur(fmt(tr(T_ErrSuppression), "").c_str(), nullptr, erreur, fin);
+        if (enCours) { piedCarte(nullptr, nullptr, false, nullptr, tr(T_DesinstEnCours)); finCarte(); return; }
+        int b = piedCarte(tr(T_PasMaintenant), tr(T_Supprimer));
+        if (b == 1) finAnciennes();
+        if (b == 2) supprimerAnciennes();
+        finCarte();
+    }
+
+    void supprimerAnciennes() { lancer(Job::Suppression, [liste = anciennes] { for (auto& a : liste) supprimerAncienne(a); }); }
+
+    // ---- Désinstallation ----
+    void listerDesinstallation()
+    {
+        listeDesinst.clear();
+        for (auto& p : aDesinstaller(in, !effacerSauvegardes)) listeDesinst.push_back({ p, tailleSansLiens(p) });
+    }
+
+    void preparerDesinstallation()
+    {
+        effacerSauvegardes = false;
+        { std::lock_guard l(g_t.m); g_t.echec = false; g_t.erreur.clear(); g_t.fin.clear(); }
+        listerDesinstallation();
+        ecran = Ecran::Desinstaller;
+    }
+
+    void ecranDesinstaller()
+    {
+        carte("desinstaller");
+        titre(tr(T_DesinstTitre));
+        ImGui::Dummy(ImVec2(0, S(10)));
+        bool enCours, echec;
+        std::string erreur;
+        std::deque<std::string> fin;
+        { std::lock_guard l(g_t.m); enCours = job == Job::Suppression; echec = g_t.echec; erreur = g_t.erreur; fin = g_t.fin; }
+        if (echec && !enCours)
+        {
+            panneauErreur(fmt(tr(T_ErrSuppression), "").c_str(), nullptr, erreur, fin);
+            if (piedCarte(nullptr, tr(T_Fermer)) == 2) quitter = true;
+            finCarte();
+            return;
+        }
+        police(g_semibold, 16);
+        ImGui::TextUnformatted(tr(T_DesinstIntro));
+        finPolice();
+        float h = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - S(34) - S(44) - S(150);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, rgb(kChamp, 0.85f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(14), S(10)));
+        ImGui::BeginChild("liste", ImVec2(0, std::max(h, S(80))), ImGuiChildFlags_AlwaysUseWindowPadding);
+        police(g_regular, 14);
+        for (auto& [p, t] : listeDesinst)
+        {
+            ImGui::TextUnformatted(cheminWin(p).c_str());
+            if (t >= (1u << 20)) { ImGui::SameLine(); ImGui::TextColored(rgb(kTexteDoux), "%s", taille(t).c_str()); }
+        }
+        finPolice();
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, S(6)));
+        ImGui::BeginDisabled(enCours);
+        police(g_regular, 15);
+        bool v = effacerSauvegardes;
+        if (ImGui::Checkbox(tr(T_DesinstSauvegardes), &v))
+        {
+            if (v) confirmerSauvegardes = true;   // confirmation (popup « sauvegardes ») avant de cocher
+            else { effacerSauvegardes = false; listerDesinstallation(); }
+        }
+        finPolice();
+        ImGui::EndDisabled();
+        if (!effacerSauvegardes) texteDoux(fmt(tr(T_DesinstGardeSauv), cheminWin(data).c_str()).c_str(), 14);
+        texteDoux(tr(T_DesinstGarde), 14);
+        if (enCours) { piedCarte(nullptr, nullptr, false, nullptr, tr(T_DesinstEnCours)); finCarte(); return; }
+        int b = piedCarte(tr(T_Annuler), tr(T_Desinstaller));
+        if (b == 1) ecran = Ecran::Jouer;
+        if (b == 2) lancerDesinstallation();
+        finCarte();
+    }
+
+    void lancerDesinstallation()
+    {
+        {
+            journal("désinstallation" + std::string(effacerSauvegardes ? " (sauvegardes comprises)" : "") + " :");
+            for (auto& [p, t] : listeDesinst) journal("  " + u8(p));
+            {   // le journal du lanceur est dans le dossier supprimé : la suite reste en mémoire
+                std::lock_guard l(g_t.m);
+                if (g_t.journal) std::fclose(g_t.journal);
+                g_t.journal = nullptr;
+            }
+            lancer(Job::Suppression, [this, garder = !effacerSauvegardes] { desinstaller(in, garder); });
+        }
+    }
+
+    void ecranDesinstalle()
+    {
+        size_t gardes;   // fichiers d'entrée gardés, affichés plus bas : carte agrandie d'autant
+        { std::lock_guard l(g_t.m); gardes = g_t.fin.size(); }
+        carte("desinstalle", 0, std::min(360.f + 56.f * gardes, tailleFenetre().y / g_s - 40));
+        icone(Icone::Ok);
+        texteCouleur(kVert, tr(T_DesinstFini), g_semibold, 24);
+        ImGui::Dummy(ImVec2(0, S(14)));
+        police(g_regular, 16);
+        ImGui::TextWrapped("%s", fmt(tr(T_DesinstFiniDetail), cheminWin(selfPath()).c_str()).c_str());
+        if (!effacerSauvegardes) { ImGui::Dummy(ImVec2(0, S(8))); ImGui::TextWrapped("%s", fmt(tr(T_DesinstGardeSauv), cheminWin(data).c_str()).c_str()); }
+        {   // seules lignes de desinstaller() : fichiers d'entrée gardés
+            std::lock_guard l(g_t.m);
+            for (auto& f : g_t.fin) { ImGui::Dummy(ImVec2(0, S(4))); texteCouleur(kJaune, f.c_str()); }
+        }
+        finPolice();
+        if (piedCarte(nullptr, tr(T_Fermer)) == 2) quitter = true;
+        finCarte();
+    }
+
     void ecranFatale()
     {
         carte("fatale");
@@ -1365,7 +1711,7 @@ struct App
         finCarte();
     }
 
-    bool popup(const char* id, const char* titreP, const char* texte, const char* oui, bool* ouvert)
+    bool popup(const char* id, const char* titreP, const char* texte, const char* oui, bool* ouvert, bool garder = false)
     {
         if (*ouvert) ImGui::OpenPopup(id);
         bool r = false;
@@ -1380,6 +1726,7 @@ struct App
             police(g_regular, 16);
             ImGui::TextWrapped("%s", texte);
             finPolice();
+            if (garder) { ImGui::Dummy(ImVec2(0, S(8))); caseGarder(); }
             ImGui::Dummy(ImVec2(0, S(18)));
             if (bouton(tr(T_Annuler), false, ImVec2(0, S(42)))) { *ouvert = false; ImGui::CloseCurrentPopup(); }
             float w = largeurBouton(oui) + S(24);
@@ -1401,6 +1748,7 @@ struct App
                                         ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoBringToFrontOnFocus);
         ImGui::PopStyleVar();
         if (ecran != Ecran::Jouer && ecran != Ecran::Reglages) entete();
+        if (ecran == Ecran::Accueil || ecran == Ecran::Choix || ecran == Ecran::Verification || ecran == Ecran::Progression) etapes();
         switch (ecran)
         {
         case Ecran::Accueil: ecranAccueil(); break;
@@ -1410,8 +1758,12 @@ struct App
         case Ecran::Reglages: ecranReglages(); break;
         case Ecran::Jouer: ecranJouer(); break;
         case Ecran::Fatale: ecranFatale(); break;
+        case Ecran::Anciennes: ecranAnciennes(); break;
+        case Ecran::Desinstaller: ecranDesinstaller(); break;
+        case Ecran::Desinstalle: ecranDesinstalle(); break;
         }
-        if (popup("recomp", tr(T_ConfirmRecompTitre), tr(T_ConfirmRecomp), tr(T_Recompiler), &confirmerRecompilation)) construire(true);
+        if (popup("recomp", tr(T_ConfirmRecompTitre), tr(T_ConfirmRecomp), tr(T_Recompiler), &confirmerRecompilation, true)) construire(true);
+        if (popup("sauvegardes", tr(T_ConfirmSauvTitre), tr(T_ConfirmSauv), tr(T_Supprimer), &confirmerSauvegardes)) { effacerSauvegardes = true; listerDesinstallation(); }
         if (popup("quitter", tr(T_QuitterTitre), tr(T_Quitter), tr(T_QuitterOui), &confirmerQuitter)) quitter = true;
         if (attenteEcrasement)   // sauvegardes déjà présentes dans userdata : remplacer, ou garder (Annuler)
         {
@@ -1437,7 +1789,7 @@ struct App
             {
                 std::lock_guard l(g_t.m);
                 if (g_t.journal) std::fclose(g_t.journal);
-                g_t.journal = _wfopen(journalPath.c_str(), L"ab");
+                g_t.journal = ouvrirJournal(journalPath);
             }
             journal("==== WakfuRecomp (fenêtre), outils " + in.id + (portableMode() ? ", mode portable" : ""));
             {
@@ -1446,8 +1798,12 @@ struct App
                 g_t.avantJournal.clear();
             }
             data = dataDir(in.D);
+            if (!portableMode() && !fs::exists(raccourciMenu()))   // entrée de menu (Démarrer / applications), mode normal
+                try { creerRaccourci(raccourciMenu(), in); journal("entrée de menu : " + u8(raccourciMenu())); }
+                catch (const std::exception& e) { journal(std::string("ERREUR : ") + e.what()); }
             chargerReglages();
             aJour = isUpToDate(in);
+            if (anciennesRepondu) std::ofstream(in.D / ".anciennes-vues").close();
             if (isInstalled(in)) { ecran = Ecran::Jouer; chargerImages(); }
             else if (isPrepared(in)) { ecran = Ecran::Verification; dejaPrepare = true; gb = freeGb(in.D); chargerImages(); }
             return true;
@@ -1458,10 +1814,10 @@ struct App
             ecran = Ecran::Fatale;
             if (journalPath.empty())
             {
-                wchar_t t[MAX_PATH + 1];
-                if (GetTempPathW(MAX_PATH + 1, t)) journalPath = fs::path(t) / "WakfuRecomp-lanceur.txt";
+                std::error_code ec;
+                journalPath = fs::temp_directory_path(ec) / "WakfuRecomp-lanceur.txt";
                 std::lock_guard l(g_t.m);
-                if (!journalPath.empty()) g_t.journal = _wfopen(journalPath.c_str(), L"ab");
+                if (!ec) g_t.journal = ouvrirJournal(journalPath);
             }
             journal(std::string("ERREUR au démarrage : ") + e.what());
             return false;
@@ -1469,6 +1825,20 @@ struct App
     }
 
     void demarrer()
+    {
+        try { anciennes = anciennesInstallations(); }
+        catch (const std::exception& e) { journal(std::string("anciennes installations : ") + e.what()); }
+        std::error_code ec;
+        if (!anciennes.empty() && !fs::exists(defaultWorkDir() / ".anciennes-vues", ec))   // proposées une fois
+        {
+            for (auto& a : anciennes) journal(fmt("ancienne installation : %s (%.1f Go)", u8(a.dossier).c_str(), a.taille / 1073741824.0));
+            ecran = Ecran::Anciennes;
+            return;
+        }
+        demarrerSuite();
+    }
+
+    void demarrerSuite()
     {
         // Premier lancement (ni portable.txt ni dossier de l'installation normale) : choix du mode à l'accueil,
         // avant de créer quoi que ce soit
@@ -1519,6 +1889,17 @@ struct App
         const bool reel = std::getenv("WAKFURECOMP_CAPTURE_REEL") != nullptr;
         auto aucun = [] { return true; };
         pas.push_back({ "00-demarrage", [] {}, aucun });   // écran choisi au démarrage (état réel du dossier de travail)
+        if (std::getenv("WAKFURECOMP_CAPTURE_ICONE")) iconeBureau = true;
+        if (reel && ecran == Ecran::Anciennes)   // anciennes installations : « Supprimer » pour de vrai
+        {
+            pas.push_back({ "00b-anciennes-suppression", [this] { supprimerAnciennes(); }, [this] { return job == Job::Aucun; } });
+            pas.push_back({ "00c-apres-anciennes", [] {}, aucun });
+        }
+        if (reel && std::getenv("WAKFURECOMP_CAPTURE_INSTALLE"))   // jeu déjà installé : jeu et désinstallation seulement
+        {
+            capturesFinales(true);
+            return;
+        }
         // Accueil du premier lancement : choix du mode ; portable vérifié pour de vrai (dossier de l'exécutable)
         pas.push_back({ "01-accueil-choix-mode", [this] { ecran = Ecran::Accueil; choixMode = true; modePortable = false; refusPortable.clear(); }, aucun });
         pas.push_back({ "01b-accueil-portable", [this] { choisirPortable(); }, aucun });
@@ -1560,7 +1941,7 @@ struct App
         {
             pas.push_back({ "05-verification", [this] { verifier(); }, [this] { return job == Job::Aucun; } });
             pas.push_back({ "06-verification-fin", [] {}, aucun });
-            pas.push_back({ "07-progression", [this] { if (verifOk) construire(false); }, [this] { return job == Job::Aucun; } });
+            pas.push_back({ "07-progression", [] {}, [this] { return job == Job::Aucun; } });   // construction lancée par la fin de la vérification
             pas.push_back({ "08-fin-recompilation", [] {}, aucun });
         }
         else
@@ -1604,7 +1985,37 @@ struct App
             conflits = 3; confirmerEcrasement = attenteEcrasement = true;
             if (anciennesDonnees.empty()) anciennesDonnees = appDataDir();
         }, aucun });
+        pas.push_back({ "21-verification-cases", [this] {   // état simulé : vérification réussie (cases ménage / bureau)
+            confirmerEcrasement = attenteEcrasement = false; ecran = Ecran::Verification; job = Job::Aucun;
+            faux(EtPreparation, -1, 0); { std::lock_guard l(g_t.m); g_t.fin.clear(); } verifOk = true; dejaPrepare = false; gb = 41.7;
+        }, aucun });
+        pas.push_back({ "22-anciennes", [this] {   // état simulé si aucune ancienne installation réelle
+            if (anciennes.empty()) anciennes = { { "/exemple/wakfu-recomp-natif", {}, 3u << 30 } };
+            ecran = Ecran::Anciennes;
+        }, aucun });
+        pas.push_back({ "23-desinstaller", [this] { anciennes.clear(); preparerDesinstallation(); }, aucun });
+        pas.push_back({ "24-desinstaller-sauvegardes", [this] { confirmerSauvegardes = true; }, aucun });
+        capturesFinales(reel);
         dernierePeriodique = Clock::now();
+    }
+
+    void capturesFinales(bool reel)
+    {
+        auto aucun = [] { return true; };
+        if (reel && std::getenv("WAKFURECOMP_CAPTURE_JOUER"))   // jeu lancé pour de vrai (WAKFU_STOP_AT_SWAP pour l'arrêter)
+            pas.push_back({ "25-jeu", [this] { confirmerSauvegardes = false; ecran = Ecran::Jouer; jouer(); },
+                            [this] { return !jeuEnCours && !(SDL_GetWindowFlags(win) & SDL_WINDOW_HIDDEN); } });
+        if (reel && std::getenv("WAKFURECOMP_CAPTURE_DESINSTALLER"))   // pour de vrai ; ..._EFFACER_SAUVEGARDES : sauvegardes comprises
+        {
+            pas.push_back({ "26-desinstallation", [this] {
+                confirmerSauvegardes = false;
+                preparerDesinstallation();
+                if (std::getenv("WAKFURECOMP_CAPTURE_EFFACER_SAUVEGARDES")) { effacerSauvegardes = true; listerDesinstallation(); }
+                lancerDesinstallation();
+            }, [this] { return job == Job::Aucun; } });
+            pas.push_back({ "27-desinstalle", [] {}, aucun });
+        }
+        else if (!reel) pas.push_back({ "26-desinstalle", [this] { confirmerSauvegardes = false; ecran = Ecran::Desinstalle; }, aucun });
     }
 
     void avancerCapture()   // après le rendu, avant la présentation
@@ -1677,7 +2088,7 @@ struct App
             if (cap) avancerCapture();
             SDL_RenderPresent(ren);
         }
-        if (job != Job::Aucun || jeuEnCours) ExitProcess(1);   // fil de travail bloqué sur un outil : le job l'arrête avec nous
+        if (job != Job::Aucun || jeuEnCours) quitterDeSuite();   // fil de travail bloqué sur un outil : arrêté avec nous
         if (fil.joinable()) fil.join();
         return 0;
     }
@@ -1732,8 +2143,7 @@ void appliquerTheme()
 
 int erreurBoite(const std::string& m)
 {
-    std::wstring t = fromU8(std::string(tr(T_ErreurDemarrage)) + "\n\n" + m).wstring();
-    MessageBoxW(nullptr, t.c_str(), L"WakfuRecomp", MB_ICONERROR | MB_OK);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "WakfuRecomp", (std::string(tr(T_ErreurDemarrage)) + "\n\n" + m).c_str(), nullptr);
     return 1;
 }
 
@@ -1743,7 +2153,9 @@ int guiMain()
 {
     initLangue();
     g_suivi = &g_suiviFenetre;
+#ifdef _WIN32
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+#endif
     SDL_SetMainReady();
     SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
@@ -1768,8 +2180,13 @@ int guiMain()
         io.IniFilename = nullptr;
         io.LogFilename = nullptr;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+#ifdef _WIN32
         g_regular = policeRessource(L"INTER_REGULAR");
         g_semibold = policeRessource(L"INTER_SEMIBOLD");
+#else
+        g_regular = policeRessource(kInterRegular, sizeof kInterRegular);
+        g_semibold = policeRessource(kInterSemiBold, sizeof kInterSemiBold);
+#endif
         appliquerTheme();
         ImGui_ImplSDL2_InitForSDLRenderer(app.win, app.ren);
         ImGui_ImplSDLRenderer2_Init(app.ren);
@@ -1780,7 +2197,7 @@ int guiMain()
     {
         journal(std::string("ERREUR : ") + e.what());
         erreurBoite(e.what());
-        if (app.job != Job::Aucun) ExitProcess(1);
+        if (app.job != Job::Aucun) quitterDeSuite();
         if (app.fil.joinable()) app.fil.join();
         return 1;
     }

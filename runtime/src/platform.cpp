@@ -1,7 +1,7 @@
 #include "platform.h"
-#include <algorithm>
-#include <atomic>
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -19,73 +19,18 @@
 #include <sys/stat.h>
 #else
 #include <csignal>
+#include <ctime>
 #include <execinfo.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <spawn.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
 namespace wk::platform {
-
-namespace {
-constexpr uint32_t kWatchPages = 0x20000000u >> 12;   // pages de 4 Ko de la mémoire physique
-uint8_t* g_watchBase = nullptr;
-std::atomic<uint64_t> g_watchGen{1};
-std::atomic<uint64_t> g_watchFaults{0};
-std::atomic<uint64_t> g_pageGen[kWatchPages];
-std::atomic<uint8_t> g_pageRo[kWatchPages];           // 1 : page en lecture seule (dans les deux vues)
-bool SetPages(uint32_t first, uint32_t count, bool ro);
-}  // namespace
-
-void WatchInit(uint8_t* guestBase) { g_watchBase = guestBase; }
-bool WatchFault(uintptr_t addr) {
-    if (!g_watchBase) return false;
-    const uintptr_t off = addr - uintptr_t(g_watchBase);
-    if (off < 0xA0000000u || off >= 0xE0000000u) return false;
-    const uint32_t page = uint32_t(off & 0x1FFFFFFFu) >> 12;
-    if (!g_pageRo[page].load()) return false;
-    g_pageGen[page].store(g_watchGen.fetch_add(1) + 1);   // avant l'écriture : un lecteur la verra comme modifiée
-    SetPages(page, 1, false);
-    g_pageRo[page].store(0);
-    g_watchFaults++;
-    return true;
-}
-uint64_t WatchFaults() { return g_watchFaults.load(); }
-uint64_t WatchSerial() { return g_watchGen.load(); }
-void WatchProtect(uint32_t physStart, uint32_t physEnd) {
-    if (!g_watchBase || physEnd <= physStart) return;
-    const uint32_t first = (physStart & 0x1FFFFFFFu) >> 12, last = std::min(kWatchPages, ((physEnd - 1) & 0x1FFFFFFFu) / 4096 + 1);
-    for (uint32_t p = first; p < last;) {   // suites de pages encore inscriptibles
-        if (g_pageRo[p].load()) { p++; continue; }
-        uint32_t q = p;
-        while (q < last && !g_pageRo[q].load()) g_pageRo[q++].store(1);
-        if (!SetPages(p, q - p, true)) for (uint32_t k = p; k < q; k++) g_pageRo[k].store(0);
-        p = q;
-    }
-}
-uint64_t WatchGen(uint32_t physStart, uint32_t physEnd) {
-    if (physEnd <= physStart) return 0;
-    const uint32_t first = (physStart & 0x1FFFFFFFu) >> 12, last = std::min(kWatchPages, ((physEnd - 1) & 0x1FFFFFFFu) / 4096 + 1);
-    uint64_t g = 0;
-    for (uint32_t p = first; p < last; p++) g = std::max(g, g_pageGen[p].load());
-    return g;
-}
-void WatchTouch(uint32_t physStart, uint32_t physEnd, bool writable) {
-    if (physEnd <= physStart) return;
-    const uint32_t first = (physStart & 0x1FFFFFFFu) >> 12, last = std::min(kWatchPages, ((physEnd - 1) & 0x1FFFFFFFu) / 4096 + 1);
-    const uint64_t g = g_watchGen.fetch_add(1) + 1;
-    for (uint32_t p = first; p < last; p++) g_pageGen[p].store(g);
-    if (!writable) return;
-    for (uint32_t p = first; p < last;) {   // suites de pages en lecture seule : une protection par suite
-        if (!g_pageRo[p].load()) { p++; continue; }
-        uint32_t q = p;
-        while (q < last && g_pageRo[q].load()) g_pageRo[q++].store(0);
-        SetPages(p, q - p, false);
-        p = q;
-    }
-}
 
 namespace { CrashCallback g_onCrash = nullptr; }
 
@@ -130,23 +75,6 @@ void* ReserveGuestMemory(uint64_t size) {
     return VirtualAlloc(nullptr, SIZE_T(size), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 }
 
-namespace {
-bool SetPages(uint32_t first, uint32_t count, bool ro) {
-    DWORD old;
-    bool ok = true;
-    for (uint64_t view : {0xA0000000ull, 0xC0000000ull})
-        ok = VirtualProtect(g_watchBase + view + uint64_t(first) * 4096, SIZE_T(count) * 4096, ro ? PAGE_READONLY : PAGE_READWRITE, &old) && ok;
-    return ok;
-}
-LONG WINAPI OnWatchFault(EXCEPTION_POINTERS* e) {
-    const EXCEPTION_RECORD* r = e->ExceptionRecord;
-    if (r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && r->NumberParameters > 1 && r->ExceptionInformation[0] == 1 &&
-        WatchFault(uintptr_t(r->ExceptionInformation[1])))
-        return EXCEPTION_CONTINUE_EXECUTION;
-    return EXCEPTION_CONTINUE_SEARCH;
-}
-}  // namespace
-
 static LONG WINAPI OnException(EXCEPTION_POINTERS* e) {
     if (g_onCrash) g_onCrash(int(e->ExceptionRecord->ExceptionCode),
                              e->ExceptionRecord->NumberParameters > 1 ? uintptr_t(e->ExceptionRecord->ExceptionInformation[1]) : 0);
@@ -155,7 +83,6 @@ static LONG WINAPI OnException(EXCEPTION_POINTERS* e) {
 }
 void InstallCrashHandler(CrashCallback cb) {
     g_onCrash = cb;
-    AddVectoredExceptionHandler(1, OnWatchFault);
     SetUnhandledExceptionFilter(OnException);
 }
 void PrintBacktrace() {
@@ -185,8 +112,66 @@ int64_t WriteAt(int fd, const void* buf, uint64_t size, uint64_t offset) {
 bool Truncate(int fd, uint64_t size) { return _chsize_s(fd, int64_t(size)) == 0; }
 void CloseFile(int fd) { _close(fd); }
 void RegisterCurrentThreadForDump(unsigned) {}
-void DetachConsole(const std::string& journal) { if (freopen(journal.c_str(), "w", stderr)) FreeConsole(); }
+// FreeConsole avant freopen : sinon (Wine, console créée pour le jeu lancé par WakfuRecomp) elle ferme la poignée
+// standard d'erreur, devenue celle du journal, et journal.txt reste vide. Console gardée si le journal est impossible.
+void DetachConsole(const std::string& journal) {
+    FILE* essai = fopen(journal.c_str(), "w");
+    if (!essai) return;
+    fclose(essai);
+    FreeConsole();
+    (void)!freopen(journal.c_str(), "w", stderr);
+}
+void ShowError(const std::string& title, const std::string& message) {
+    auto large = [](const std::string& u) {
+        std::wstring w(MultiByteToWideChar(CP_UTF8, 0, u.c_str(), int(u.size()), nullptr, 0), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, u.c_str(), int(u.size()), w.data(), int(w.size()));
+        return w;
+    };
+    MessageBoxW(nullptr, large(message).c_str(), large(title).c_str(), MB_OK | MB_ICONERROR | MB_TOPMOST);
+}
+std::string ExeDir() {
+    std::vector<wchar_t> b(32768);
+    const DWORD k = GetModuleFileNameW(nullptr, b.data(), DWORD(b.size()));
+    if (!k || k >= b.size()) return "";
+    try { return std::filesystem::path(std::wstring(b.data(), k)).parent_path().string(); } catch (...) { return ""; }
+}
+
+int RunTool(const std::vector<std::string>& args, const char*) {
+    std::string ligne;   // règles de CommandLineToArgvW : les « \ » qui précèdent un « " » (ou le guillemet fermant) sont doublés
+    for (const std::string& a : args) {
+        ligne += ligne.empty() ? "\"" : " \"";
+        size_t barres = 0;
+        for (char c : a) {
+            if (c == '\\') { ++barres; continue; }
+            if (c == '"') ligne.append(2 * barres + 1, '\\');
+            else ligne.append(barres, '\\');
+            barres = 0;
+            ligne += c;
+        }
+        ligne.append(2 * barres, '\\');
+        ligne += '"';
+    }
+    // mode d'erreur hérité par l'outil : un plantage de XenosRecomp/DXC ne doit pas ouvrir de fenêtre (jouer.cmd ne le règle pas) ;
+    // le jeu garde son filtre OnException, seule la boîte de dialogue système disparaît
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    STARTUPINFOA si{sizeof si};
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(nullptr, ligne.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+                        nullptr, nullptr, &si, &pi)) return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD rc = DWORD(-1);
+    GetExitCodeProcess(pi.hProcess, &rc);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return int(rc);
+}
 void DumpAllThreadsAfter(int) {}
+double ThreadCpuMs() {
+    FILETIME c, e, k, u;   // unités de 100 ns
+    if (!GetThreadTimes(GetCurrentThread(), &c, &e, &k, &u)) return 0;
+    const auto v = [](FILETIME f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+    return (v(k) + v(u)) / 1e4;
+}
 
 #else
 
@@ -195,7 +180,41 @@ void DumpAllThreadsAfter(int) {}
 void Init() {
     if (const char* p = getenv("WAKFU_PROFIL"); p && *p == '1') prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0);
 }
-void DetachConsole(const std::string&) {}
+// Lancé par WakfuRecomp (WAKFU_JOURNAL=1) : stderr vers le journal, comme sous Windows ; sinon sorties inchangées
+void DetachConsole(const std::string& journal) {
+    if (getenv("WAKFU_JOURNAL")) (void)!freopen(journal.c_str(), "w", stderr);
+}
+
+void ShowError(const std::string&, const std::string&) {}   // stderr et journal suffisent (lanceur)
+
+extern "C" char** environ;
+std::string ExeDir() {
+    std::error_code ec;
+    const std::filesystem::path p = std::filesystem::read_symlink("/proc/self/exe", ec);
+    return ec ? "" : p.parent_path().string();
+}
+
+int RunTool(const std::vector<std::string>& args, const char* libDir) {
+    std::vector<std::string> env;
+    for (char** v = environ; *v; v++)
+        if (!libDir || strncmp(*v, "LD_LIBRARY_PATH=", 16) != 0) env.push_back(*v);
+    if (libDir) env.push_back(std::string("LD_LIBRARY_PATH=") + libDir);
+    std::vector<char*> a, e;
+    for (const std::string& s : args) a.push_back(const_cast<char*>(s.c_str()));
+    for (std::string& s : env) e.push_back(s.data());
+    a.push_back(nullptr);
+    e.push_back(nullptr);
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    pid_t pid;
+    const int err = posix_spawn(&pid, a[0], &fa, nullptr, a.data(), e.data());
+    posix_spawn_file_actions_destroy(&fa);
+    int st = 0;
+    if (err != 0 || waitpid(pid, &st, 0) != pid) return -1;
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
 
 // Mémoire invitée : 4 Go ; la mémoire physique (512 Mo, memfd) est vue en 0xA0000000 et en miroir en
 // 0xC0000000 (pages de 16 Mo sur la console).
@@ -213,17 +232,7 @@ void* ReserveGuestMemory(uint64_t size) {
     return p;
 }
 
-namespace {
-bool SetPages(uint32_t first, uint32_t count, bool ro) {
-    bool ok = true;
-    for (uint64_t view : {0xA0000000ull, 0xC0000000ull})
-        ok = mprotect(g_watchBase + view + uint64_t(first) * 4096, size_t(count) * 4096, ro ? PROT_READ : PROT_READ | PROT_WRITE) == 0 && ok;
-    return ok;
-}
-}  // namespace
-
 static void OnSignal(int sig, siginfo_t* info, void*) {
-    if (sig == SIGSEGV && WatchFault(uintptr_t(info->si_addr))) return;   // écriture surveillée : reprise
     if (g_onCrash) g_onCrash(sig, uintptr_t(info->si_addr));
     PrintBacktrace();
     _exit(128 + sig);
@@ -277,6 +286,12 @@ void DumpAllThreadsAfter(int seconds) {
         { std::lock_guard<std::mutex> lock(g_dumpMutex); ids = g_dumpThreads; }
         for (auto& [t, id] : ids) { pthread_kill(t, SIGUSR2); usleep(200000); }
     }).detach();
+}
+
+double ThreadCpuMs() {
+    timespec t;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+    return t.tv_sec * 1e3 + t.tv_nsec / 1e6;
 }
 
 #endif

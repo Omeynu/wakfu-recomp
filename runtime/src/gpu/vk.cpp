@@ -77,34 +77,22 @@ bool Context::Init(std::string* error) {
     std::vector<VkPhysicalDevice> devices(count);
     vkEnumeratePhysicalDevices(instance, &count, devices.data());
     // Préférence : GPU dédié, puis intégré, puis logiciel (lavapipe)
-    int best = -1, bestScore = -1;
+    // Option [video] gpu, sinon dédié > intégré > autre (règle partagée avec le lanceur, config::ChoisirGpu)
+    std::vector<config::GpuVu> vus;
     for (uint32_t i = 0; i < count; i++) {
         VkPhysicalDeviceProperties p;
         vkGetPhysicalDeviceProperties(devices[i], &p);
-        if (p.apiVersion < VK_API_VERSION_1_3) continue;
-        const int score = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3 :
-                          p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
-        if (score > bestScore) { best = int(i); bestScore = score; }
+        vus.push_back({p.deviceName, int(p.deviceType), p.apiVersion >= VK_API_VERSION_1_3});
     }
-    // Option [video] gpu : premier GPU Vulkan 1.3 dont le nom contient le texte (casse ignorée)
-    if (!config::g.gpu.empty()) {
-        std::string want = config::g.gpu;
-        for (char& ch : want) ch = char(tolower(uint8_t(ch)));
-        bool found = false;
-        for (uint32_t i = 0; i < count && !found; i++) {
-            VkPhysicalDeviceProperties p;
-            vkGetPhysicalDeviceProperties(devices[i], &p);
-            std::string name = p.deviceName;
-            for (char& ch : name) ch = char(tolower(uint8_t(ch)));
-            if (p.apiVersion >= VK_API_VERSION_1_3 && name.find(want) != std::string::npos) { best = int(i); found = true; }
-        }
-        if (!found) fprintf(stderr, "[config] GPU « %s » introuvable : choix automatique\n", config::g.gpu.c_str());
-    }
+    bool trouve = true;
+    const int best = config::ChoisirGpu(vus, config::g.gpu, &trouve);
+    if (!trouve) fprintf(stderr, "[config] GPU « %s » introuvable : choix automatique\n", config::g.gpu.c_str());
     if (best < 0) return fail("aucun GPU Vulkan 1.3");
     physical = devices[best];
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physical, &props);
     deviceName = props.deviceName;
+    deviceType = int(props.deviceType);
     timestampPeriod = props.limits.timestampComputeAndGraphics ? props.limits.timestampPeriod : 0.0f;
 
     uint32_t qn = 0;
@@ -113,7 +101,13 @@ bool Context::Init(std::string* error) {
     vkGetPhysicalDeviceQueueFamilyProperties(physical, &qn, qf.data());
     bool found = false;
     for (uint32_t i = 0; i < qn && !found; i++)
-        if (qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) { queueFamily = i; found = true; }
+        if (qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            queueFamily = i;
+            found = true;
+            const uint32_t bits = qf[i].timestampValidBits;
+            if (!bits) timestampPeriod = 0;
+            else if (bits < 64) timestampMask = (1ull << bits) - 1;
+        }
     if (!found) return fail("aucune file graphique");
 
     const float prio = 1.0f;
@@ -124,7 +118,7 @@ bool Context::Init(std::string* error) {
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     f13.dynamicRendering = VK_TRUE;
     f13.synchronization2 = VK_TRUE;
-    // Extensions : import de mémoire hôte (mémoire invitée lue directement par les shaders)
+    // Extensions : chaîne d'échange (fenêtre)
     PFN_vkEnumerateDeviceExtensionProperties enumExt = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
         g_getInstanceProcAddr(instance, "vkEnumerateDeviceExtensionProperties"));
     uint32_t en = 0;
@@ -132,49 +126,36 @@ bool Context::Init(std::string* error) {
     std::vector<VkExtensionProperties> exts(en);
     enumExt(physical, nullptr, &en, exts.data());
     std::vector<const char*> enabled;
-    for (auto& e : exts)
-        if (!strcmp(e.extensionName, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)) {
-            enabled.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
-            hostMemoryImport = true;
-        }
     if (!g_instanceExtensions.empty())
         for (auto& e : exts)
             if (!strcmp(e.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
                 enabled.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
                 swapchain = true;
             }
-#ifndef _WIN32
-    for (auto& e : exts) {
-        if (!strcmp(e.extensionName, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)) {
-            enabled.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
-            memoryFdExport = true;
-        }
-        if (!strcmp(e.extensionName, VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME)) {
-            enabled.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
-            dmaBufExport = true;
-        }
-    }
-    if (!memoryFdExport) dmaBufExport = false;
-#endif
-    if (hostMemoryImport) {
-        VkPhysicalDeviceExternalMemoryHostPropertiesEXT hp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
-        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-        p2.pNext = &hp;
-        auto getProps2 = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(g_getInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties2"));
-        getProps2(physical, &p2);
-        hostPointerAlignment = hp.minImportedHostPointerAlignment;
-    }
-    uniformAlignment = props.limits.minUniformBufferOffsetAlignment;
     // Accès hors limites des tampons : contenus (adresses invitées parfois farfelues)
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     f2.features.robustBufferAccess = VK_TRUE;
     VkPhysicalDeviceFeatures supported{};
     vkGetPhysicalDeviceFeatures(physical, &supported);
-    f2.features.geometryShader = supported.geometryShader;   // rectangles Xenos (4e sommet calculé)
-    geometryShader = supported.geometryShader;
-    f2.features.samplerAnisotropy = supported.samplerAnisotropy;   // option filtrage_anisotrope
-    maxAnisotropy = supported.samplerAnisotropy ? props.limits.maxSamplerAnisotropy : 0;
-    f2.pNext = &f13;
+    f2.features.textureCompressionBC = supported.textureCompressionBC;
+    bc = supported.textureCompressionBC;
+    // Shaders natifs (B3, XenosRecomp) : constantes par adresse de tampon, tableaux de descripteurs sans borne
+    VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    {
+        VkPhysicalDeviceVulkan12Features s12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+        VkPhysicalDeviceFeatures2 q{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+        q.pNext = &s12;
+        auto getFeat2 = reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(g_getInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2"));
+        if (getFeat2) getFeat2(physical, &q);
+        natifShaders = s12.bufferDeviceAddress && s12.runtimeDescriptorArray && supported.shaderInt64;
+        for (auto [ok, nom] : {std::pair{s12.bufferDeviceAddress, "bufferDeviceAddress"}, {s12.runtimeDescriptorArray, "runtimeDescriptorArray"},
+                               {supported.shaderInt64, "shaderInt64"}})
+            if (!ok) natifManque += std::string(natifManque.empty() ? "" : ", ") + nom;
+        f12.bufferDeviceAddress = f12.runtimeDescriptorArray = natifShaders;
+        f2.features.shaderInt64 = natifShaders;
+    }
+    f12.pNext = &f13;
+    f2.pNext = &f12;
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.pNext = &f2;
     dci.enabledExtensionCount = uint32_t(enabled.size());
@@ -208,14 +189,14 @@ uint32_t Context::FindMemory(uint32_t typeBits, VkMemoryPropertyFlags props) con
     return UINT32_MAX;
 }
 
-bool Context::CreateImage(uint32_t w, uint32_t h, VkFormat format, VkImageUsageFlags usage, Image* out) {
+bool Context::CreateImage(uint32_t w, uint32_t h, VkFormat format, VkImageUsageFlags usage, Image* out, VkSampleCountFlagBits samples) {
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ci.imageType = VK_IMAGE_TYPE_2D;
     ci.format = format;
     ci.extent = {w, h, 1};
     ci.mipLevels = 1;
     ci.arrayLayers = 1;
-    ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    ci.samples = samples;
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
     ci.usage = usage;
     if (vkCreateImage(device, &ci, nullptr, &out->image) != VK_SUCCESS) return false;
@@ -264,8 +245,11 @@ void Context::EndOneShot(VkCommandBuffer cmd) {
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
-    vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue);
+    {
+        std::lock_guard<std::mutex> l(queueLock);
+        vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+        vkQueueWaitIdle(queue);
+    }
     vkFreeCommandBuffers(device, pool, 1, &cmd);
 }
 

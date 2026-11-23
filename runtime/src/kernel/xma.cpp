@@ -49,6 +49,7 @@ struct Decoder {
 std::mutex g_mutex;
 uint32_t g_array = 0;   // adresse invitée du tableau (vue physique 0xA0000000)
 Decoder g_ctx[kContextCount];
+Bilan g_bilan;   // sous g_mutex
 
 uint8_t* Phys(uint32_t phys) { return Host(0xA0000000u | (phys & (kPhysSize - 1))); }
 bool PhysRange(uint32_t phys, uint32_t size) { return (phys & (kPhysSize - 1)) + uint64_t(size) <= kPhysSize; }
@@ -171,7 +172,10 @@ void Work(uint32_t id) {
             // 2. Paquet suivant du tampon d'entrée courant (ou de l'autre s'il est seul valide)
             uint32_t cur = w[4] >> 31;
             if (!(w[0] & (1u << (20 + cur)))) {
-                if (!(w[0] & (1u << (21 - cur)))) break;   // plus d'entrée : on attend le jeu
+                if (!(w[0] & (1u << (21 - cur)))) {   // plus d'entrée : on attend le jeu
+                    if (wr == rd) g_bilan.aVide++;          // et la sortie est vide : le lecteur va manquer d'échantillons
+                    break;
+                }
                 w[4] ^= 0x80000000u;
                 cur ^= 1;
                 SetOffset(w[2], 32);
@@ -221,6 +225,13 @@ void Init() {
     g_array = Alloc(Heap::Physical, kContextCount * 64, 0x1000);
     const uint32_t phys = g_array & (kPhysSize - 1);
     memcpy(Host(kRegArrayBase), &phys, 4);   // lu par lwbrx
+}
+
+Bilan Releve() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const Bilan b = g_bilan;
+    g_bilan = Bilan{};
+    return b;
 }
 
 bool HasDecoder() {
@@ -279,7 +290,7 @@ void ServiceRegisters() {
                 d.lastReadOffset = ~0u;
             }
             // lock (désactivation) : rien à arrêter, le décodage ne se fait qu'au kick
-            if (kick[r] & bit) Work(id);
+            if (kick[r] & bit) { g_bilan.decodages++; Work(id); }
         }
 }
 

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include "../quit.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <mutex>
@@ -228,33 +229,78 @@ WK_IMPORT(XamInputGetKeystrokeEx) {
 WK_IMPORT(XAudioGetSpeakerConfig) { WK_TRACE(XAudioGetSpeakerConfig); St32(ctx.r3.u32, 0x00010001); Ret(ctx, 0); }
 WK_IMPORT(XAudioGetVoiceCategoryVolume) { WK_TRACE(XAudioGetVoiceCategoryVolume); StoreFloat(ctx.r4.u32, 1.0f); Ret(ctx, 0); }
 // Pilote audio : un thread invité appelle chaque client toutes les 5,33 ms (256 échantillons à 48 kHz),
-// comme le matériel. Avec une sortie son, un appel est sauté tant que plus de kMaxQueuedFrames trames
-// attendent côté hôte : la cadence suit l'horloge du périphérique (pas de dérive), latence <= 43 ms.
+// comme le matériel ; les trames rendues par les clients pendant un tour sont additionnées (mixage du matériel) en
+// une seule trame de sortie. Avant, elles étaient mises bout à bout : avec 3-4 clients actifs, le son du jeu passait
+// à 1/3-1/4 de sa vitesse, haché de trames d'autres clients, et les vidéos (calées sur l'horloge du son) ralentissaient. Avec une sortie son, la file de l'hôte est tenue à kTargetFrames trames (64 ms) : jusqu'à
+// 4 tours par réveil quand elle baisse, aucun quand elle est pleine. La cadence suit l'horloge du périphérique et
+// la réserve couvre son quantum (1024 échantillons sous PipeWire) et les retards du fil. Avant (une trame par
+// réveil), la file restait presque vide : chaque retard de plus de 5 ms ou appel de 1024 échantillons tombant
+// avant la 4e trame laissait un trou de silence (son haché).
 namespace {
 std::mutex g_audioMutex;
 // argCell : cellule invitée contenant l'argument ; le rappel reçoit son adresse (il fait objet = *r3).
 struct AudioClient { uint32_t callback, arg, argCell; std::chrono::steady_clock::time_point active; };
 std::vector<AudioClient> g_audioClients;
-constexpr uint32_t kMaxQueuedFrames = 8;
+constexpr uint32_t kTargetFrames = 12;
+std::atomic<uint32_t> g_submits[4];   // trames reçues par client (bilan du journal)
+std::mutex g_mixMutex;
+float g_mix[2 * audio::kFrameSamples];   // somme des trames du tour (stéréo)
+bool g_mixUsed = false;
 void StartAudioThread() {
     GuestThread* t = CreateGuestThread(0x10000);
     std::thread([t] {
         PPCContext ctx{};
         AttachThread(t, ctx);
         const bool output = audio::Open();
-        auto next = std::chrono::steady_clock::now();
+        using clock = std::chrono::steady_clock;
+        auto next = clock::now(), bilan = next + std::chrono::seconds(10);
+        double retardMax = 0, rappelMax = 0;
+        uint32_t fileMin = UINT32_MAX, tours = 0;
         for (;;) {
             next += std::chrono::microseconds(5333);
             std::this_thread::sleep_until(next);
-            if (output && audio::QueuedFrames() > kMaxQueuedFrames) continue;
-            std::vector<AudioClient> clients;
-            { std::lock_guard<std::mutex> lock(g_audioMutex); clients = g_audioClients; }
-            const auto now = std::chrono::steady_clock::now();
-            for (auto& c : clients) {
-                // Le client finit de s'initialiser après l'enregistrement : premier rappel différé de 100 ms.
-                if (now < c.active) continue;
-                ctx.r3.u64 = c.argCell;
-                CallGuest(c.callback, ctx);
+            const auto reveil = clock::now();
+            retardMax = std::max(retardMax, std::chrono::duration<double, std::milli>(reveil - next).count());
+            uint32_t n = 1;
+            if (output) {
+                const uint32_t q = audio::QueuedFrames();
+                fileMin = std::min(fileMin, q);
+                // un tour par réveil ; rattrapage (jusqu'à 4) seulement si la file a baissé sous 8 trames
+                n = q >= kTargetFrames ? 0 : q >= 8 ? 1 : std::min(kTargetFrames - q, 4u);
+            }
+            for (uint32_t i = 0; i < n; i++) {
+                std::vector<AudioClient> clients;
+                { std::lock_guard<std::mutex> lock(g_audioMutex); clients = g_audioClients; }
+                const auto now = clock::now();
+                for (auto& c : clients) {
+                    // Le client finit de s'initialiser après l'enregistrement : premier rappel différé de 100 ms.
+                    if (now < c.active) continue;
+                    ctx.r3.u64 = c.argCell;
+                    CallGuest(c.callback, ctx);
+                }
+                {
+                    std::lock_guard<std::mutex> lock(g_mixMutex);
+                    if (g_mixUsed) audio::Submit(g_mix);
+                    std::fill(std::begin(g_mix), std::end(g_mix), 0.0f);
+                    g_mixUsed = false;
+                }
+                rappelMax = std::max(rappelMax, std::chrono::duration<double, std::milli>(clock::now() - now).count());
+                tours++;
+            }
+            if (reveil >= bilan) {   // diagnostic du son haché : une ligne toutes les 10 s
+                bilan += std::chrono::seconds(10);
+                const audio::Bilan b = audio::Releve();
+                const xma::Bilan x = xma::Releve();
+                uint32_t s[4];
+                for (int i = 0; i < 4; i++) s[i] = g_submits[i].exchange(0);
+                fprintf(stderr, "[son] 10 s : tours %u, trames par client %u/%u/%u/%u ; sortie : appels %u de %u éch., "
+                        "sous-alimentations %u (%.0f ms de silence), file min %u trames ; fil : retard max %.1f ms, "
+                        "rappel du jeu max %.1f ms ; xma : décodages %u, sortie vide sans entrée %u\n",
+                        tours, s[0], s[1], s[2], s[3], b.appels, b.echantillonsParAppel, b.sousAlimentations,
+                        b.manquants / 48.0, fileMin == UINT32_MAX ? 0 : fileMin, retardMax, rappelMax, x.decodages, x.aVide);
+                retardMax = rappelMax = 0;
+                fileMin = UINT32_MAX;
+                tours = 0;
             }
         }
     }).detach();
@@ -278,7 +324,14 @@ WK_IMPORT(XAudioUnregisterRenderDriverClient) { WK_TRACE(XAudioUnregisterRenderD
 WK_IMPORT(XAudioSubmitRenderDriverFrame) {
     WK_TRACE(XAudioSubmitRenderDriverFrame);
     // (pilote 0x4155xxxx, trame*) : 6 x 256 flottants gros-boutistes (voir audio_out.h)
-    if (ctx.r4.u32) audio::Submit(Host(ctx.r4.u32));
+    g_submits[ctx.r3.u32 & 3]++;
+    if (ctx.r4.u32) {
+        float stereo[2 * audio::kFrameSamples];
+        audio::DownmixToStereo(Host(ctx.r4.u32), stereo);
+        std::lock_guard<std::mutex> lock(g_mixMutex);
+        for (int i = 0; i < 2 * audio::kFrameSamples; i++) g_mix[i] += stereo[i];
+        g_mixUsed = true;
+    }
     Ret(ctx, 0);
 }
 // Contextes XMA : tableau matériel et décodage dans kernel/xma.cpp

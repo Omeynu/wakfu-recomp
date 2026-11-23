@@ -1,6 +1,5 @@
-// GPU minimal du jalon 2 (Vd*) : l'anneau de commandes est « consommé » instantanément (pointeur de
-// lecture = pointeur d'écriture), le rappel d'interruption est appelé à 60 Hz. Les paquets PM4 ne
-// sont pas exécutés : c'est le jalon 3.
+// Imports Vd* : anneau de commandes lu par le processeur de commandes (gpu_cp.cpp, sans rendu : le rendu est natif),
+// rappel d'interruption appelé à 60 Hz (vblank), VdSwap marqué dans le flux.
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -8,20 +7,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
-#include <filesystem>
 #include "../platform.h"
 #include "../trace.h"
 #include "../process.h"
 #include "stub.h"
 #include "sync.h"
 #include "gpu_cp.h"
-#include "frontbuffer.h"
 #include "window.h"
 #ifdef WAKFU_HAS_SHADERGEN
-#include "../gpu/renderer.h"
-#include "../gpu/shader_cache.h"
+#include "../natif/device.h"
 #endif
-#include <set>
 #include <string>
 
 using namespace wk;
@@ -37,24 +32,15 @@ const int g_stopAtSwap = getenv("WAKFU_STOP_AT_SWAP") ? atoi(getenv("WAKFU_STOP_
 uint32_t PhysToGuest(uint32_t p) { return p < 0x20000000 ? 0xA0000000u | p : p; }
 }  // namespace
 
-static void OnGpuSwap(uint32_t n, const uint32_t fetch[6]);
-static void FinishFrame(uint32_t n, const uint32_t fetch[6]);
+static void OnGpuSwap(uint32_t n);
 
 namespace wk {
-extern std::string g_gameDir, g_dataDir;
 void StartDpcThread();
 
 void StartSystemThreads() {
     StartDpcThread();
-    CpLoadShaderCatalog(g_gameDir + "/Media/Shaders");
-    CpLoadShaderCatalogFromImage(PPC_IMAGE_BASE, PPC_IMAGE_SIZE);
-#ifdef WAKFU_HAS_SHADERGEN
-    wk::gpu::ShaderCacheSetDir(g_dataDir + "/cache");   // SPIR-V et pipelines Vulkan sur disque
-    CpSetShaderHook(wk::gpu::ShaderCacheOnLoad);   // traduction des shaders au premier chargement
-    CpPrecompileCatalog(wk::gpu::ShaderCacheOnLoad);   // et d'avance pour ceux du jeu
-#endif
-    // Thread « processeur de commandes » : exécute l'anneau, interruptions CP (source 1). Il porte aussi
-    // la fenêtre (création, événements, présentation) et le rendu, initialisés avant de rendre la main.
+    // Thread « processeur de commandes » : exécute l'anneau (barrières, interruptions CP, source 1). Il porte aussi
+    // la fenêtre (création, événements) et crée le contexte Vulkan du rendu natif avant de rendre la main.
     GuestThread* cp = CreateGuestThread(0x10000);
     // Signal « prêt » : atomique + attente active courte (std::promise utilise call_once, introuvable sous MinGW + Clang)
     std::atomic<bool> cpReady{false};
@@ -67,7 +53,7 @@ void StartSystemThreads() {
         const char* render = getenv("WAKFU_RENDER");
         if (render ? *render == '1' : window::IsOpen()) {
             std::string err;
-            if (!wk::gpu::RendererInit(&err)) fprintf(stderr, "[rendu] désactivé : %s\n", err.c_str());
+            if (!wk::natif::InitialiserVulkan(&err)) wk::natif::RenduImpossible("initialisation Vulkan : " + err);
         }
 #endif
         cpReady.store(true);
@@ -88,11 +74,7 @@ void StartSystemThreads() {
                 if (g_rptrWriteback) St32(PhysToGuest(g_rptrWriteback), rptr);
             }
             window::Pump();
-#ifdef WAKFU_HAS_SHADERGEN
-            // lots GPU en vol : attente bloquante de leur fin (écritures différées appliquées dès qu'elle arrive)
-            if (wk::gpu::RendererWait(500000)) continue;
-#endif
-            // Anneau vide, rien en vol : le jeu attend souvent une barrière que le CP doit lire au plus vite (BlockOnFence,
+            // Anneau vide : le jeu attend souvent une barrière que le CP doit lire au plus vite (BlockOnFence,
             // ≈ 1 image d'attente par image). 500 µs -> 20 µs : 17,6 -> 20,4-20,9 img/s (sauvegarde du joueur, zone 1).
             std::this_thread::sleep_for(std::chrono::microseconds(20));
         }
@@ -185,30 +167,14 @@ WK_IMPORT(VdRetrainEDRAMWorker) { WK_TRACE(VdRetrainEDRAMWorker); Ret(ctx, 0); }
 WK_IMPORT(VdEnableDisableClockGating) { WK_TRACE(VdEnableDisableClockGating); }
 WK_IMPORT(VdInitializeScalerCommandBuffer) { WK_TRACE(VdInitializeScalerCommandBuffer); Ret(ctx, 0); }
 WK_IMPORT(VdCallGraphicsNotificationRoutines) { WK_TRACE(VdCallGraphicsNotificationRoutines); Ret(ctx, 0); }
-// Captures : WAKFU_CAPTURE="60,300,900" (numéros d'image) ou "toutes:N" ; dossier WAKFU_CAPTURE_DIR (captures/).
-namespace {
-bool WantCapture(uint32_t n) {
-    static const std::string spec = getenv("WAKFU_CAPTURE") ? getenv("WAKFU_CAPTURE") : "";
-    if (spec.empty()) return false;
-    if (spec.rfind("toutes:", 0) == 0) { const int k = atoi(spec.c_str() + 7); return k > 0 && n % k == 0; }
-    static std::set<uint32_t> frames = [] {
-        std::set<uint32_t> f;
-        for (size_t i = 0; i < spec.size();) {
-            size_t j = spec.find(',', i);
-            if (j == std::string::npos) j = spec.size();
-            f.insert(uint32_t(atoi(spec.substr(i, j - i).c_str())));
-            i = j + 1;
-        }
-        return f;
-    }();
-    return frames.count(n) > 0;
-}
-}  // namespace
+// Fin d'image, dans l'ordre du flux GPU (thread du processeur de commandes) : présentation native, cadence, arrêt.
+namespace wk { uint32_t SwapsEmis() { return g_swaps.load(); } }
 
-// Fin d'image, dans l'ordre du flux GPU (thread du processeur de commandes) : rendu, statistiques,
-// capture (après les resolves de l'image), arrêt éventuel.
-static void OnGpuSwap(uint32_t n, const uint32_t fetch[6]) {
+static void OnGpuSwap(uint32_t n) {
     CpSetSwapCounter(n);
+#ifdef WAKFU_HAS_SHADERGEN
+    wk::natif::SwapCp(n);   // présentation et capture : fil natif
+#endif
     {   // cadence réelle dans le journal, toutes les 5 s (retours des joueurs)
         using clock = std::chrono::steady_clock;
         static clock::time_point t0 = clock::now();
@@ -220,57 +186,12 @@ static void OnGpuSwap(uint32_t n, const uint32_t fetch[6]) {
             n0 = n;
         }
     }
-    const CpFrameStats st = CpEndFrame();
-#ifdef WAKFU_HAS_SHADERGEN
-    const wk::gpu::RendererFrameStats rs = wk::gpu::RendererEndFrame();
-    static uint64_t faultsBefore = 0;
-    const uint64_t faults = platform::WatchFaults() - faultsBefore;
-    faultsBefore += faults;
-    if (wk::gpu::RendererActive() && (n <= 3 || n % 60 == 0))
-        fprintf(stderr, "[rendu %u] draws %u (ignorés %u), resolves %u (ignorés %u), effacements %u, textures %u (échecs %u), lots %u (attentes %u : chevauchement %u, CP %u, lots en vol %u), GPU %.1f ms, fautes %llu\n", n,
-                rs.drawn, rs.skipped, rs.resolves, rs.resolvesSkipped, rs.clears, rs.textureUploads, rs.textureFailures,
-                rs.batches, rs.waits, rs.waitsOverlap, rs.waitsSync, rs.waitsRing, rs.gpuUs / 1000.0, (unsigned long long)faults);
-    if (wk::gpu::RendererActive() && rs.gpuCatUs[0] + rs.gpuCatUs[5] && (n % 60 == 0))
-        fprintf(stderr, "[gpu %u] draws %.1f ms, décodages %.1f, envois %.1f, resolves %.1f, effacements %.1f, reste %.1f\n", n,
-                rs.gpuCatUs[0] / 1000.0, rs.gpuCatUs[1] / 1000.0, rs.gpuCatUs[2] / 1000.0, rs.gpuCatUs[3] / 1000.0,
-                rs.gpuCatUs[4] / 1000.0, rs.gpuCatUs[5] / 1000.0);
-#endif
-    if (n <= 3 || n % 60 == 0) {
-        fprintf(stderr, "[image %u] draws %u (indices %u, primitives %s) resolves %u, shaders chargés %u "
-                        "(%u distincts, %u hors catalogue) ; cumul : %u shaders (%u du XEX, %u hors catalogue), %llu resolves\n",
-                n, st.draws, st.indices, st.prims.c_str(), st.resolves, st.shaderLoads, st.shaders, st.unknownShaders,
-                st.totalShaders, st.totalXexShaders, st.totalUnknownShaders, (unsigned long long)st.totalResolves);
-        if (!st.unknownOps.empty()) fprintf(stderr, "[gpu] paquets type 3 inconnus (cumul) : %s\n", st.unknownOps.c_str());
-    }
-    if (n == 1) {
-        const FrontBuffer fb = ParseFetchWords(fetch);
-        fprintf(stderr, "[gpu] tampon d'image : adresse %08X %ux%u pas %u format %u octets %u tuilé %u ; "
-                        "dernier resolve vers %08X (pas %08X info %08X)\n",
-                fb.address, fb.width, fb.height, fb.pitch, fb.format, fb.endian, fb.tiled,
-                st.lastResolve.destBase, st.lastResolve.destPitch, st.lastResolve.destInfo);
-    }
-    // Présentation, capture et arrêt lisent le tampon d'image : à la fin réelle du travail GPU de l'image
-    // (rendu asynchrone), dans l'ordre du flux ; tout de suite sans rendu.
-    std::array<uint32_t, 6> f;
-    std::copy(fetch, fetch + 6, f.begin());
-    auto finish = [n, f] { FinishFrame(n, f.data()); };
-#ifdef WAKFU_HAS_SHADERGEN
-    if (wk::gpu::RendererActive() && wk::gpu::RendererDefer(finish)) return;
-#endif
-    finish();
-}
-
-static void FinishFrame(uint32_t n, const uint32_t fetch[6]) {
-    window::Present(fetch);
-    if (WantCapture(n)) {
-        static const std::string dir = getenv("WAKFU_CAPTURE_DIR") ? getenv("WAKFU_CAPTURE_DIR") : "captures";
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-        const std::string path = dir + "/image_" + std::to_string(n) + ".png";
-        fprintf(stderr, "[capture] %s : %s\n", path.c_str(), CaptureFrontBuffer(fetch, path) ? "écrite" : "échec");
-    }
     if (g_stopAtSwap && int(n) >= g_stopAtSwap) {
+#ifdef WAKFU_HAS_SHADERGEN
+        wk::natif::Vider();   // captures des dernières images écrites avant l'arrêt
+#endif
         fprintf(stderr, "[arret] %u VdSwap atteints\n", n);
+        if (trace::Start() && trace::g_n.load() < trace::kMax) trace::Dump();   // trace non pleine : écrite à l'arrêt
         fflush(stderr);
         _Exit(0);
     }
@@ -280,12 +201,11 @@ WK_IMPORT(VdSwap) {
     trace::g_frame++;
     trace::Mark('P');
     WK_TRACE(VdSwap);
-    // (emplacement de 64 mots réservé par D3D, constante de texture du tampon d'image, …) : l'emplacement
-    // reçoit le marqueur de swap (signature, numéro, constante recopiée), traité par le processeur de commandes.
+    // (emplacement de 64 mots réservé par D3D, …) : l'emplacement reçoit le marqueur de swap (signature, numéro), traité
+    // par le processeur de commandes.
     const uint32_t buf = ctx.r3.u32, n = ++g_swaps;
     St32(buf, 0xC0000000u | (62u << 16) | (kCpSwapOpcode << 8));
     St32(buf + 4, kCpSwapMagic);
     St32(buf + 8, n);
-    for (uint32_t i = 0; i < 6; i++) St32(buf + 12 + 4 * i, Ld32(ctx.r4.u32 + 4 * i));
     Ret(ctx, 0);
 }

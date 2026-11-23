@@ -3,6 +3,7 @@
 #include <string>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace wk::platform {
 
@@ -15,20 +16,8 @@ void DetachConsole(const std::string& journal);
 // Windows : la totalité est engagée (comptée dans la mémoire virtuelle du système).
 void* ReserveGuestMemory(uint64_t size);
 
-// Surveillance des écritures dans la mémoire physique invitée (512 Mo, vues 0xA0000000 et 0xC0000000), par pages
-// de 4 Ko : WatchProtect passe une plage en lecture seule ; la première écriture (code invité ou hôte) lève une faute
-// qui rend la page inscriptible et augmente son numéro d'écriture. WatchGen : plus grand numéro de la plage.
-// WatchTouch : numéro augmenté sans faute ; `writable` : plage rendue inscriptible (écriture système à venir, ex. lecture
-// de fichier) ; sans : écriture du GPU (resolve), protection inchangée.
-void WatchInit(uint8_t* guestBase);
-void WatchProtect(uint32_t physStart, uint32_t physEnd);
-uint64_t WatchGen(uint32_t physStart, uint32_t physEnd);
-void WatchTouch(uint32_t physStart, uint32_t physEnd, bool writable);
-// Faute à `addr` due à la surveillance : page rendue inscriptible, vrai (sinon : vraie faute).
-bool WatchFault(uintptr_t addr);
-uint64_t WatchFaults();
-// Numéro global : change à chaque écriture surveillée ou WatchTouch (si inchangé, aucune plage n'a changé).
-uint64_t WatchSerial();   // fautes traitées depuis le lancement (statistiques)
+// Erreur bloquante montrée au joueur : boîte de message sous Windows (le journal la reçoit aussi) ; ailleurs, sans effet.
+void ShowError(const std::string& title, const std::string& message);
 
 // Plantage : `onCrash(signal ou code d'exception, adresse fautive)` puis fin du processus.
 using CrashCallback = void (*)(int code, uintptr_t faultAddress);
@@ -42,6 +31,16 @@ int64_t ReadAt(int fd, void* buf, uint64_t size, uint64_t offset);
 int64_t WriteAt(int fd, const void* buf, uint64_t size, uint64_t offset);
 bool Truncate(int fd, uint64_t size);
 void CloseFile(int fd);
+
+// Lance un outil (args[0] = chemin), sorties jetées, et attend sa fin : code de sortie, -1 si lancement impossible ou
+// arrêt anormal. `libDir` (Linux, peut être nul) : LD_LIBRARY_PATH de l'outil. Windows : priorité basse, sans fenêtre.
+int RunTool(const std::vector<std::string>& args, const char* libDir);
+
+// Dossier de l'exécutable (Linux /proc/self/exe, Windows GetModuleFileNameW) ; vide si inconnu ou non représentable.
+std::string ExeDir();
+
+// Temps processeur du thread appelant, en ms (statistiques).
+double ThreadCpuMs();
 
 // Diagnostic : demande la pile de chaque thread enregistré (Linux seulement ; sans effet sous Windows).
 void RegisterCurrentThreadForDump(unsigned id);
