@@ -1,6 +1,6 @@
 # wakfu-recomp
 
-[![Support on Patreon](https://img.shields.io/badge/Patreon-support%20the%20project-F96854?logo=patreon&logoColor=white)](https://www.patreon.com/Omeynu)
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-support%20the%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/omeynu)
 
 A static recompilation of **Islands of Wakfu** (Xbox Live Arcade, Xbox 360, title `584109AA`) to native PC code.
 The game's PowerPC code is translated to C++ with a patched [XenonRecomp](https://github.com/hedge-dev/XenonRecomp);
@@ -11,7 +11,7 @@ reimplemented in a runtime (SDL2).
 Wakfu natively on my PC instead of going through an emulator.
 
 **[Download the latest release](https://github.com/Omeynu/wakfu-recomp/releases/latest)** ·
-**[Support the project on Patreon](https://www.patreon.com/Omeynu)**
+**[Support the project on Ko-fi](https://ko-fi.com/omeynu)**
 
 > [!IMPORTANT]
 > This project does not include any game assets. You must provide the files from your own legally acquired copy
