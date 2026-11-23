@@ -1,5 +1,5 @@
 # Lanceur WakfuRecomp (Windows : WakfuRecomp.exe, packaging/windows/build-installer.sh ; Linux : WakfuRecomp,
-# packaging/linux/build-paquet.sh). Tests : test_gen_imports (comparé à runtime/tools/gen_imports.py), test_suppression.
+# packaging/linux/build-paquet.sh). Tests : test_gen_imports (comparé à runtime/tools/gen_imports.py), test_suppression, test_migration.
 # Lanceur : -Dzstd_DIR (bibliothèque statique), -DIMGUI_DIR (Dear ImGui), -DINTER_DIR (Inter-*.ttf),
 #           -DXENONRECOMP_DIR (TinySHA1, toml++ et xxHash de ses sous-modules) ; Windows : -DSDL2_DIR (statique),
 #           Linux : SDL2 et zlib du système, Clang (#embed).
@@ -9,6 +9,8 @@ set(CMAKE_CXX_STANDARD 20)
 add_executable(test_gen_imports test_gen_imports.cpp gen_imports.cpp)
 add_executable(test_suppression test_suppression.cpp suppression.cpp)
 target_include_directories(test_suppression PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../wakfu-prepare)   # xiso.h (constantes)
+add_executable(test_migration test_migration.cpp suppression.cpp)
+target_include_directories(test_migration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../wakfu-prepare)
 set(IMGUI_DIR "" CACHE PATH "Sources de Dear ImGui")
 set(INTER_DIR "" CACHE PATH "Dossier contenant Inter-Regular.ttf et Inter-SemiBold.ttf")
 set(XENONRECOMP_DIR "" CACHE PATH "Racine du clone XenonRecomp")

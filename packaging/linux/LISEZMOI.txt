@@ -9,9 +9,10 @@ Islands of Wakfu recompilé — WakfuRecomp pour Linux
 3. Ensuite :             « WakfuRecomp » dans le menu des applications (créé au premier lancement).
 
 Dossier : ~/.local/share/wakfu-recomp (jeu, sauvegardes et réglages dans userdata, journaux).
-Mode portable : choisi au premier lancement (tout dans wakfu-recomp, à côté du lanceur).
+Ancien mode portable (wakfu-recomp à côté du lanceur) : sauvegardes copiées une fois dans le dossier ci-dessus.
 Désinstaller : bouton « Désinstaller » de la fenêtre (sauvegardes gardées sauf demande ; le lanceur n'est pas touché).
 Aucun fichier du jeu n'est fourni : il faut posséder le jeu et sa mise à jour.
 Anticrénelage MSAA (Réglages > Image) : « Auto » le coupe sur GPU intégré (portable) pour gagner en fluidité ;
 « Activé » ou « Désactivé » imposent le choix. Le GPU détecté est noté dans journal-lanceur.txt (lignes [gpu]).
-Journaux : userdata/journal.txt (jeu, lancement en cours ; journal.1.txt, journal.2.txt avant), journal-lanceur.txt.
+Journaux : userdata/journal.log (jeu, lancement en cours ; journal.1.log, journal.2.log avant), journal-lanceur.txt,
+userdata/journal-installation.log (lancement par RecompLauncher).

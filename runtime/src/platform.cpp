@@ -119,7 +119,7 @@ bool Truncate(int fd, uint64_t size) { return _chsize_s(fd, int64_t(size)) == 0;
 void CloseFile(int fd) { _close(fd); }
 void RegisterCurrentThreadForDump(unsigned) {}
 // FreeConsole avant freopen : sinon (Wine, console créée pour le jeu lancé par WakfuRecomp) elle ferme la poignée
-// standard d'erreur, devenue celle du journal, et journal.txt reste vide. Console gardée si le journal est impossible.
+// standard d'erreur, devenue celle du journal, et journal.log reste vide. Console gardée si le journal est impossible.
 void DetachConsole(const std::string& journal) {
     FILE* essai = fopen(journal.c_str(), "w");
     if (!essai) return;

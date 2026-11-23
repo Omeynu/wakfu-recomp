@@ -3,9 +3,7 @@
 ## Installer et lancer
 
 1. Télécharger `WakfuRecomp.exe` depuis la page [Releases](https://github.com/Omeynu/wakfu-recomp/releases) et l'ouvrir (double-clic).
-2. Accueil : choisir « Installation normale » (recommandé : jeu dans `%LOCALAPPDATA%\WakfuRecomp`, données dans
-   `%APPDATA%\WakfuRecomp`) ou « Portable » (tout dans `<dossier de l'exe>\WakfuRecomp`, données dans `...\userdata` ;
-   refusé, avec la raison, sous Program Files, dans OneDrive, en lecture seule ou avec moins de 3 Go libres).
+2. Accueil : « Commencer » (jeu dans `%LOCALAPPDATA%\WakfuRecomp`, données dans `%APPDATA%\WakfuRecomp`).
 3. Deux champs « Jeu (Islands of Wakfu) » et « Mise à jour (TU 2) » : glisser-déposer (un ou deux fichiers n'importe
    où sur la fenêtre : ils sont classés d'après leur contenu) ou « Parcourir ». Paquet STFS, image ISO/XISO ou dossier
    extrait. Chaque champ affiche aussitôt ✔ « Jeu de base » / ✔ « Mise à jour 2 », ou ✖ et la cause (pas un paquet
@@ -42,11 +40,11 @@ Mettre dans `config.toml` :
 console = false
 ```
 
-Le journal complet est alors écrit dans `%APPDATA%\WakfuRecomp\journal.txt` ; les deux lancements précédents
-restent dans `journal.1.txt` et `journal.2.txt`. La dernière ligne (`[sortie] code N : raison`) dit pourquoi le jeu
+Le journal complet est alors écrit dans `%APPDATA%\WakfuRecomp\journal.log` ; les deux lancements précédents
+restent dans `journal.1.log` et `journal.2.log`. La dernière ligne (`[sortie] code N : raison`) dit pourquoi le jeu
 s'est arrêté. Pour signaler un problème, ouvrir une issue sur GitHub avec :
 
-- `journal.txt` (et `config.toml`) ;
+- `journal.log` (et `config.toml`) ;
 - une ou deux captures d'écran du problème ;
 - en une phrase : ce qui a été fait (menu, zone, action) et ce qui s'est passé.
 

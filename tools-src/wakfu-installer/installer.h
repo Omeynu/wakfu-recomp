@@ -36,15 +36,8 @@ struct Install
 };
 
 fs::path selfPath();
-bool portableMode();                       // portable.txt à côté de l'exécutable (relu à chaque appel)
-fs::path defaultWorkDir();                 // %LOCALAPPDATA%\WakfuRecomp (Linux ~/.local/share/wakfu-recomp), ou <exe>/WakfuRecomp en mode portable
-fs::path portableDir();                    // <dossier du lanceur>/WakfuRecomp (Linux : wakfu-recomp)
-fs::path appDataDir();                     // %APPDATA%\WakfuRecomp (données du mode normal ; vide si APPDATA absent)
-// Mode portable : dossier de l'exécutable refusé s'il est sous Program Files ou OneDrive, non accessible en écriture
-// (fichier test) ou avec moins de 3 Go libres (*gb : espace libre mesuré).
-enum class RefusPortable { Aucun, ProgramFiles, OneDrive, Ecriture, Espace };
-RefusPortable verifierPortable(double* gb);
-void activerPortable();                    // crée portable.txt (Error si impossible)
+fs::path defaultWorkDir();                 // %LOCALAPPDATA%\WakfuRecomp (Linux ~/.local/share/wakfu-recomp)
+fs::path appDataDir();                     // %APPDATA%\WakfuRecomp (données ; vide si APPDATA absent)
 void openWorkDir(Install& in, fs::path D); // crée D (marqueur .wakfurecomp), lit l'archive
 fs::path dataDir(const fs::path& D);        // dossier des données du joueur (config.toml, sauvegardes)
 bool isPrepared(const Install& in);         // jeu préparé (work/game/patched/image.bin)
@@ -74,12 +67,16 @@ void verifierSuppression(const fs::path& racine, const fs::path& cible);
 uint64_t supprimerDans(const fs::path& racine, const fs::path& cible, std::vector<fs::path>* gardes = nullptr);
 bool estEntree(const fs::path& p);   // fichier d'entrée possible : .iso/.xiso, paquet STFS (jeu, TU), image XDVDFS
 uint64_t tailleSansLiens(const fs::path& p);   // octets, liens non suivis
+// Ancien mode portable (suppression.cpp) : si ancien porte le marqueur .wakfurecomp et que ancien/userdata n'est pas
+// vide, son contenu est copié une fois dans data (témoin data/.portable-copie) : fichiers absents seulement, rien
+// n'est remplacé ni supprimé, liens non suivis. Renvoie le nombre de fichiers copiés, -1 si rien n'est à faire.
+int64_t migrerPortable(const fs::path& ancien, const fs::path& data);
 
 // Ménage après installation : C++ recompilé, imports générés, builds CMake, outils (sauf ceux des shaders natifs,
 // utilisés à chaque lancement). Renvoie les chemins supprimés.
 std::vector<fs::path> menage(const Install& in);
 // Désinstallation : ce qui serait supprimé (dossier d'installation sauf userdata si garder, raccourcis, données
-// hors du dossier si !garder, portable.txt), puis suppression. Le lanceur n'est jamais touché.
+// hors du dossier si !garder), puis suppression. Le lanceur n'est jamais touché.
 std::vector<fs::path> aDesinstaller(const Install& in, bool garderSauvegardes);
 void desinstaller(const Install& in, bool garderSauvegardes);
 // Raccourcis : entrée de menu (Démarrer / ~/.local/share/applications), icône du bureau (facultative)

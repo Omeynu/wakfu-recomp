@@ -7,9 +7,6 @@ enum Texte {
     T_TitreFenetre, T_Marque, T_SousMarque,
     // Accueil
     T_Bienvenue, T_AccueilIntro, T_AccueilEtape1, T_AccueilEtape2, T_AccueilEtape3, T_AccueilNote, T_Commencer,
-    T_OuInstaller, T_InstNormale, T_Recommande, T_InstNormaleAide, T_InstPortable, T_InstPortableAide, T_CopierSauvegardes,
-    T_PortableProgramFiles, T_PortableOneDrive, T_PortableEcriture, T_PortableEspace, T_EcraserTitre, T_Ecraser, T_Remplacer,
-    T_ErrCopieSauvegardes,
     // Choix des fichiers
     T_ChoixTitre, T_ChoixIntro, T_SlotJeu, T_SlotMaj, T_SlotJeuAide, T_SlotMajAide, T_AucunFichier, T_Parcourir,
     T_JeuDeBase, T_MiseAJour2, T_Retour, T_Continuer, T_DialogueJeu, T_DialogueMaj, T_FichierRefuse,
@@ -23,7 +20,7 @@ enum Texte {
     T_ProgTitre, T_ProgIntro, T_EtOutils, T_EtPreparation, T_EtXenon, T_EtImports, T_EtConfiguration, T_EtCompilation,
     T_EtInstallation, T_TempsRestant, T_TempsMin, T_TempsMoinsMin, T_Calcul, T_ProgEchec, T_Reessayer, T_ProgFini,
     // Réglages
-    T_Reglages, T_ModeInstallation, T_OuvrirDossier, T_OngletAffichage, T_OngletImage, T_OngletSonManette, T_OngletClavier, T_Enregistrer, T_Defauts,
+    T_Reglages, T_OuvrirDossier, T_OngletAffichage, T_OngletImage, T_OngletSonManette, T_OngletClavier, T_Enregistrer, T_Defauts,
     T_Mode, T_ModeAide, T_ModeFenetre, T_ModePleinEcran, T_ModeSansBordure, T_Taille, T_TailleAide, T_Vsync, T_VsyncAide,
     T_Limite, T_LimiteAide, T_Aucune, T_AfficherIps, T_AfficherIpsAide, T_Gpu, T_GpuAide, T_GpuAuto,
     T_Anticrenelage, T_AnticrenelageAide, T_AaAucun, T_Msaa, T_MsaaAide, T_MsaaAuto, T_Active, T_Desactive, T_Agrandissement, T_AgrandissementAide, T_AgrLineaire, T_Nettete, T_NetteteAide, T_Luminosite, T_LuminositeAide, T_Gamma, T_GammaAide,

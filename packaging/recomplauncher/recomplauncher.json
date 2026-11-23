@@ -2,17 +2,216 @@
   "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
   "format": 1,
   "repo": "Omeynu/wakfu-recomp",
-  "game": {
-    "kind": "folder",
-    "label": "A folder holding your Islands of Wakfu XBLA package (title 584109AA) and its title update 2 package. The first start recompiles the game on your PC (a few minutes to an hour)."
-  },
+  "name": "Islands of Wakfu",
+  "inputs": [
+    {
+      "id": "game",
+      "role": "game",
+      "label": "Your Islands of Wakfu Xbox Live Arcade package (title 584109AA), an ISO/XISO image of it or its extracted folder. The first start recompiles the game on your PC (a few minutes to an hour).",
+      "formats": [
+        { "type": "file" },
+        { "type": "folder" }
+      ]
+    },
+    {
+      "id": "update",
+      "role": "update",
+      "label": "The title update 2 package of Islands of Wakfu (TU_1C422DA_0000004000000.00000000000G1).",
+      "formats": [{ "type": "file" }],
+      "sha256": "1dee1ad6ad3ed0d9a9579ef97cf1bcc2347dc052e5fb179e6dcc8bf38e0ca7be"
+    }
+  ],
   "start": {
-    "program": [
-      "WakfuRecomp.exe",
-      "WakfuRecomp"
+    "program": ["WakfuRecomp.exe", "WakfuRecomp"],
+    "args": ["{input:game}", "{input:update}"]
+  },
+  "system": {
+    "windows": { "version": "10", "graphics": { "vulkan": "1.3" } },
+    "linux": { "graphics": { "vulkan": "1.3" } }
+  },
+  "saves": ["{config}/WakfuRecomp", "{local}/wakfu-recomp/userdata"],
+  "folders": {
+    "saves": [
+      { "path": "{local}/wakfu-recomp/userdata", "if": "{local}/wakfu-recomp/wakfu" },
+      { "path": "{config}/WakfuRecomp" }
     ],
-    "args": [
-      "{game}"
+    "logs": [
+      { "path": "{local}/wakfu-recomp/userdata", "if": "{local}/wakfu-recomp/wakfu" },
+      { "path": "{config}/WakfuRecomp" }
     ]
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "toml",
+      "file": [
+        { "path": "{local}/wakfu-recomp/userdata/config.toml", "if": "{local}/wakfu-recomp/wakfu" },
+        { "path": "{config}/WakfuRecomp/config.toml" }
+      ]
+    }
+  ],
+  "groups": [{ "id": "Display" }, { "id": "Sound and comfort" }, { "id": "Advanced", "advanced": true }],
+  "settings": [
+    {
+      "id": "mode",
+      "group": "Display",
+      "label": "Display mode",
+      "help": "Borderless covers the screen without changing its resolution.",
+      "choices": [
+        { "label": "Window", "set": { "video/mode": "\"fenetre\"" } },
+        { "label": "Borderless", "set": { "video/mode": "\"sans_bordure\"" } },
+        { "label": "Fullscreen", "set": { "video/mode": "\"plein_ecran\"" } }
+      ],
+      "defaults": { "video/mode": "\"fenetre\"" }
+    },
+    {
+      "id": "window_size",
+      "group": "Display",
+      "label": "Window size",
+      "help": "Size of the window in Window mode. 1280x720 is the console's own.",
+      "when": { "video/mode": "\"fenetre\"" },
+      "choices": [
+        { "label": "1280x720", "set": { "video/largeur": "1280", "video/hauteur": "720" } },
+        { "label": "1600x900", "set": { "video/largeur": "1600", "video/hauteur": "900" } },
+        { "label": "1920x1080", "set": { "video/largeur": "1920", "video/hauteur": "1080" } },
+        { "label": "2560x1440", "set": { "video/largeur": "2560", "video/hauteur": "1440" } }
+      ],
+      "defaults": { "video/largeur": "1280", "video/hauteur": "720" }
+    },
+    {
+      "id": "upscaler",
+      "group": "Display",
+      "label": "Upscaling",
+      "help": "The game draws at 720p. FSR 1 makes it sharper in 1440p or 4K and works on any card.",
+      "choices": [
+        { "label": "Linear", "set": { "post/agrandissement": "\"lineaire\"" } },
+        { "label": "FSR 1", "set": { "post/agrandissement": "\"fsr1\"" } }
+      ],
+      "defaults": { "post/agrandissement": "\"lineaire\"" }
+    },
+    {
+      "id": "msaa",
+      "group": "Display",
+      "label": "Anti-aliasing (MSAA)",
+      "help": "Auto turns it on with a dedicated graphics card. Off is about 20% faster on the GPU.",
+      "choices": [
+        { "label": "Auto", "set": { "video/multi_echantillonnage": "\"auto\"" } },
+        { "label": "On", "set": { "video/multi_echantillonnage": "\"active\"" } },
+        { "label": "Off", "set": { "video/multi_echantillonnage": "\"desactive\"" } }
+      ],
+      "defaults": { "video/multi_echantillonnage": "\"auto\"" }
+    },
+    {
+      "id": "vsync",
+      "group": "Display",
+      "label": "V-Sync",
+      "help": "Syncs frames to the screen to avoid tearing.",
+      "choices": [
+        { "label": "Off", "set": { "video/vsync": "false" } },
+        { "label": "On", "set": { "video/vsync": "true" } }
+      ],
+      "defaults": { "video/vsync": "false" }
+    },
+    {
+      "id": "fps_limit",
+      "group": "Display",
+      "label": "Frame rate limit",
+      "help": "Caps how many frames per second are drawn. The game itself runs at 60.",
+      "choices": [
+        { "label": "None", "set": { "video/limite_images": "0" } },
+        { "label": "60", "set": { "video/limite_images": "60" } },
+        { "label": "120", "set": { "video/limite_images": "120" } },
+        { "label": "144", "set": { "video/limite_images": "144" } }
+      ],
+      "defaults": { "video/limite_images": "0" }
+    },
+    {
+      "id": "show_fps",
+      "group": "Display",
+      "label": "Show frame rate",
+      "help": "Frames per second in the window title.",
+      "choices": [
+        { "label": "Off", "set": { "video/afficher_images_par_seconde": "false" } },
+        { "label": "On", "set": { "video/afficher_images_par_seconde": "true" } }
+      ],
+      "defaults": { "video/afficher_images_par_seconde": "false" }
+    },
+    {
+      "id": "language",
+      "group": "Sound and comfort",
+      "label": "Game language",
+      "help": "Texts and voices. Auto follows your system's language.",
+      "choices": [
+        { "label": "Auto", "set": { "jeu/langue": "\"auto\"" } },
+        { "label": "English", "set": { "jeu/langue": "\"en\"" } },
+        { "label": "Français", "set": { "jeu/langue": "\"fr\"" } },
+        { "label": "Deutsch", "set": { "jeu/langue": "\"de\"" } },
+        { "label": "Español", "set": { "jeu/langue": "\"es\"" } },
+        { "label": "Italiano", "set": { "jeu/langue": "\"it\"" } },
+        { "label": "日本語", "set": { "jeu/langue": "\"ja\"" } }
+      ],
+      "defaults": { "jeu/langue": "\"auto\"" }
+    },
+    {
+      "id": "volume",
+      "group": "Sound and comfort",
+      "label": "Master volume",
+      "help": "Music and effects are set in the game's own menu.",
+      "slider": { "key": "audio/volume", "min": 0, "max": 1, "step": 0.05, "format": "%.2f" },
+      "defaults": { "audio/volume": "1" }
+    },
+    {
+      "id": "skip_logos",
+      "group": "Sound and comfort",
+      "label": "Skip intro logos",
+      "help": "Skips the two logo videos at start.",
+      "choices": [
+        { "label": "Off", "set": { "confort/passer_logos": "false" } },
+        { "label": "On", "set": { "confort/passer_logos": "true" } }
+      ],
+      "defaults": { "confort/passer_logos": "false" }
+    },
+    {
+      "id": "rumble",
+      "group": "Sound and comfort",
+      "label": "Controller rumble",
+      "choices": [
+        { "label": "On", "set": { "entrees/vibrations": "true" } },
+        { "label": "Off", "set": { "entrees/vibrations": "false" } }
+      ],
+      "defaults": { "entrees/vibrations": "true" }
+    },
+    {
+      "id": "background_input",
+      "group": "Advanced",
+      "label": "Controller in background",
+      "help": "Reads the controller while the window isn't in front.",
+      "choices": [
+        { "label": "Off", "set": { "entrees/entree_arriere_plan": "false" } },
+        { "label": "On", "set": { "entrees/entree_arriere_plan": "true" } }
+      ],
+      "defaults": { "entrees/entree_arriere_plan": "false" }
+    },
+    {
+      "id": "console",
+      "group": "Advanced",
+      "label": "Log window",
+      "help": "Windows: shows the game's log in a console. Off writes it to journal.log.",
+      "choices": [
+        { "label": "Off", "set": { "confort/console": "false" } },
+        { "label": "On", "set": { "confort/console": "true" } }
+      ],
+      "defaults": { "confort/console": "false" }
+    }
+  ],
+  "actions": [
+    { "id": "open_data", "label": "Open saves and settings", "help": "Saves, config.toml and the logs.", "open": "saves" }
+  ],
+  "exit_codes": {
+    "1": "Setting up the game failed. The reason is in journal-installation.log, sent with the report.",
+    "3": "The prepared game is missing or damaged. Pick your copy again on the game's page to recompile it.",
+    "4": "Not enough free memory: the game needs 4 GB of RAM plus page file. Close other programs or enlarge the page file.",
+    "5": "The game stopped on a fatal error. Send the report: the game's log goes with it.",
+    "7": "Your graphics card can't run the game: it needs Vulkan 1.3 with bufferDeviceAddress, runtimeDescriptorArray and shaderInt64. Update your graphics driver."
   }
 }

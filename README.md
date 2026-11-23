@@ -50,9 +50,10 @@ Each step is covered by the tests and checks described in [`docs/`](docs/) (Fren
 
 ### With RecompLauncher
 
-Add **Islands of Wakfu** in [RecompLauncher](https://recomplauncher.com) and give it a folder holding the game
-package and the title update 2 package. The first start recompiles the game (a few minutes to an hour, depending on
-the CPU); later starts are immediate.
+Add **Islands of Wakfu** in [RecompLauncher](https://recomplauncher.com) and give it the game package (or its
+ISO/XISO image or extracted folder) and the title update 2 package. The first start recompiles the game (a few
+minutes to an hour, depending on the CPU); later starts are immediate. Display, sound and controller settings are
+on the game's page and in Big Picture mode.
 
 ### Manually
 
@@ -101,8 +102,8 @@ checked by SHA-1 before recompiling.
 **Why does the first start take so long?** The game's code is recompiled and compiled on your PC, because the
 generated C++ is derived from the game and cannot be distributed.
 
-**Where are the logs?** `%APPDATA%\WakfuRecomp\journal.txt` on Windows,
-`~/.local/share/wakfu-recomp/userdata/journal.txt` on Linux.
+**Where are the logs?** `%APPDATA%\WakfuRecomp\journal.log` on Windows,
+`~/.local/share/wakfu-recomp/userdata/journal.log` on Linux.
 
 ## Building
 

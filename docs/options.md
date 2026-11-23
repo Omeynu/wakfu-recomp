@@ -20,7 +20,7 @@ remplacée par sa valeur par défaut ; supprimer le fichier rend toutes les vale
 | `[entrees]` | `vibrations` | `true` | vibrations de la manette |
 | | `entree_arriere_plan` | `false` | manette lue même quand la fenêtre n'a pas le focus (le clavier exige toujours le focus) |
 | `[confort]` | `passer_logos` | `false` | les deux vidéos de logos du lancement sont sautées (le fond animé de l'écran-titre est gardé) |
-| | `console` | `true` | Windows : console du journal ; `false` : journal dans `<données>/journal.txt`, pas de console. Linux lancé par WakfuRecomp (`WAKFU_JOURNAL=1`) : `journal.txt` toujours écrit |
+| | `console` | `false` | Windows : `true` ouvre une console du journal pendant le jeu ; `false` : journal dans `<données>/journal.log`, aucune console (le lanceur crée le jeu sans console). Linux lancé par WakfuRecomp, ou Windows lancé par RecompLauncher (`WAKFU_JOURNAL=1`) : `journal.log` toujours écrit |
 | `[jeu]` | `langue` | `"auto"` | langue des textes et voix du jeu : `fr`, `en`, `de`, `es`, `it`, `ja` ; `auto` : langue du système (Windows : paramètres régionaux ; Linux : `LC_ALL`, `LC_MESSAGES`, `LANG`), anglais si le jeu ne l'a pas. Lanceur : Son et confort > Langue du jeu. Valeur retenue : ligne `[langue]` du journal |
 | `[touches]` | `<commande> = "<touche>"` | (aucune) | clavier : remplace les touches par défaut d'une commande. Commandes : `a b x y start back lb rb lt rt haut bas gauche droite clic_gauche clic_droit stick_gauche_{haut,bas,gauche,droite} stick_droit_{haut,bas,gauche,droite}` ; touches : noms SDL par position physique (QWERTY), ex. `"Space"`, `"Return"`, `"W"`, `"Left Shift"` |
 
@@ -31,8 +31,8 @@ C / V = clic des sticks.
 Quitter à la manette : maintenir BACK et START ensemble 3 secondes (le cache des pipelines est enregistré, comme à
 la fermeture de la fenêtre).
 
-Journal (option `console = false`) : `<données>/journal.txt` pour le lancement en cours, `journal.1.txt` et
-`journal.2.txt` pour les deux précédents. Dernière ligne : `[sortie] code N : raison`. Codes de sortie de
+Journal (option `console = false`) : `<données>/journal.log` pour le lancement en cours, `journal.1.log` et
+`journal.2.log` pour les deux précédents (un ancien `journal.txt` est laissé tel quel). Dernière ligne : `[sortie] code N : raison`. Codes de sortie de
 `wakfu.exe` : 0 fin normale (fenêtre fermée, le jeu quitte, Quitter à la manette) ; 2 arguments manquants ;
 3 `image.bin` ou `default.xex` absents ou invalides (relancer la recompilation) ; 4 mémoire invitée (4 Go
 d'adresses) impossible à réserver ; 5 erreur fatale signalée par le jeu (`KeBugCheck`) ; 6 plantage ;
@@ -41,15 +41,10 @@ précompilés absents) : boîte de message sous Windows, ligne `[natif]` au jour
 
 Dossier des données sous Windows : `%APPDATA%\WakfuRecomp` (sauvegardes, réglages du jeu, `config.toml`). Au premier
 lancement par l'installateur, un ancien `<dossier de travail>\userdata` est copié (jamais supprimé).
-Mode portable : un fichier `portable.txt` (contenu indifférent) à côté de `WakfuRecomp.exe` place le dossier de
-travail dans `<dossier de l'exe>\WakfuRecomp` et les données dans `<dossier de l'exe>\WakfuRecomp\userdata`.
-Au premier lancement de la fenêtre, l'accueil propose les deux modes (« Installation normale », recommandée, ou
-« Portable ») et crée `portable.txt` si le mode portable est choisi. Il est refusé (retour au mode normal, avec la
-raison) si le dossier de l'exe est sous Program Files ou dans un dossier OneDrive (variables `OneDrive`,
-`OneDriveConsumer`, `OneDriveCommercial`), n'est pas accessible en écriture (fichier test) ou a moins de 3 Go libres.
-Si `%APPDATA%\WakfuRecomp` contient déjà des fichiers, la case « Copier mes sauvegardes existantes » (cochée) les copie
-dans `userdata` ; rien n'est supprimé, et un fichier déjà présent n'est remplacé qu'après confirmation. Les réglages
-de la fenêtre affichent le mode, le dossier des données et un bouton « Ouvrir le dossier ».
+L'ancien mode portable est retiré : si un dossier `<dossier de l'exe>\WakfuRecomp` (Linux `wakfu-recomp`) créé par
+WakfuRecomp (marqueur `.wakfurecomp`) contient un `userdata` non vide, son contenu est copié une fois dans le dossier
+des données (fichiers absents seulement : rien n'est remplacé ni supprimé ; témoin `.portable-copie`).
+Les réglages de la fenêtre affichent le dossier des données et un bouton « Ouvrir le dossier ».
 
 Tests : `runtime/tests/options.sh` (création, relecture, GPU par son nom, logos, valeur invalide ; fenêtre 800x600,
 vsync et limite d'images sous Xvfb s'il est installé) et `wakfu_unit_config` (lecture, défauts, valeurs invalides,

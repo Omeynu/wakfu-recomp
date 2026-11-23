@@ -7,10 +7,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #define OS "Windows"
-#define EXE "WakfuRecomp.exe"
 #else
 #define OS "Linux"
-#define EXE "WakfuRecomp"
 #endif
 
 namespace wk {
@@ -35,41 +33,6 @@ const Entree kTextes[] = {
     { T_AccueilEtape3, "Réglez l'affichage à votre goût et jouez", "Adjust the display to your liking and play" },
     { T_AccueilNote, "Prévoyez environ 3 Go d'espace libre.", "Make sure about 3 GB of disk space is free." },
     { T_Commencer, "Commencer", "Get started" },
-    { T_OuInstaller, "Où installer le jeu ?", "Where should the game go?" },
-    { T_InstNormale, "Installation normale", "Standard install" },
-    { T_Recommande, "Recommandé", "Recommended" },
-#ifdef _WIN32
-    { T_InstNormaleAide, "Jeu dans %LOCALAPPDATA%\\WakfuRecomp, sauvegardes et réglages dans %APPDATA%\\WakfuRecomp.",
-                         "Game in %LOCALAPPDATA%\\WakfuRecomp, saves and settings in %APPDATA%\\WakfuRecomp." },
-#else
-    { T_InstNormaleAide, "Jeu, sauvegardes et réglages dans ~/.local/share/wakfu-recomp ; WakfuRecomp dans le menu des applications.",
-                         "Game, saves and settings in ~/.local/share/wakfu-recomp; WakfuRecomp in the applications menu." },
-#endif
-    { T_InstPortable, "Portable", "Portable" },
-    { T_InstPortableAide, "Tout dans le dossier de " EXE " : %s (sauvegardes dans userdata).",
-                          "Everything in the " EXE " folder: %s (saves in userdata)." },
-    { T_CopierSauvegardes, "Copier mes sauvegardes existantes (%s)", "Copy my existing saves (%s)" },
-    { T_PortableProgramFiles, "Mode portable impossible : " EXE " est dans Program Files. Déplacez-le dans un autre "
-                              "dossier (par exemple C:\\Jeux), ou gardez l'installation normale.",
-                              "Portable mode is not possible: " EXE " is in Program Files. Move it to another folder "
-                              "(for example C:\\Games), or keep the standard install." },
-    { T_PortableOneDrive, "Mode portable impossible : " EXE " est dans un dossier OneDrive, qui synchroniserait "
-                          "plusieurs Go. Déplacez-le ailleurs, ou gardez l'installation normale.",
-                          "Portable mode is not possible: " EXE " is in a OneDrive folder, which would sync several GB. "
-                          "Move it elsewhere, or keep the standard install." },
-    { T_PortableEcriture, "Mode portable impossible : le dossier de " EXE " n'est pas accessible en écriture. "
-                          "Déplacez-le dans un dossier à vous, ou gardez l'installation normale.",
-                          "Portable mode is not possible: the " EXE " folder is not writable. "
-                          "Move it to a folder of yours, or keep the standard install." },
-    { T_PortableEspace, "Mode portable impossible : seulement %.1f Go libres sur ce disque (environ 3 Go nécessaires).",
-                        "Portable mode is not possible: only %.1f GB free on this drive (about 3 GB needed)." },
-    { T_EcraserTitre, "Remplacer des fichiers ?", "Replace files?" },
-    { T_Ecraser, "%d fichier(s) de vos sauvegardes existent déjà dans %s. Les remplacer par ceux de %s ? "
-                 "« Annuler » garde les fichiers existants (les autres sont copiés).",
-                 "%d file(s) from your saves already exist in %s. Replace them with the ones from %s? "
-                 "\"Cancel\" keeps the existing files (the others are copied)." },
-    { T_Remplacer, "Remplacer", "Replace" },
-    { T_ErrCopieSauvegardes, "Copie des sauvegardes incomplète : %s", "Copying the saves did not fully succeed: %s" },
 
     { T_ChoixTitre, "Votre copie du jeu", "Your copy of the game" },
     { T_ChoixIntro, "Glissez les deux fichiers sur cette fenêtre, ou choisissez-les avec « Parcourir ».",
@@ -144,7 +107,6 @@ const Entree kTextes[] = {
                   "Recompilation complete! Adjust the game to your liking, then play." },
 
     { T_Reglages, "Réglages", "Settings" },
-    { T_ModeInstallation, "%s · données : %s", "%s · data: %s" },
     { T_OuvrirDossier, "Ouvrir le dossier", "Open folder" },
     { T_OngletAffichage, "Affichage", "Display" },
     { T_OngletImage, "Image", "Picture" },
@@ -201,7 +163,7 @@ const Entree kTextes[] = {
     { T_LangueAide, "Auto : langue du système (anglais si le jeu ne l'a pas)", "Auto: system language (English if the game lacks it)" },
     { T_LangueAuto, "Auto", "Auto" },
     { T_Console, "Fenêtre du journal", "Log window" },
-    { T_ConsoleAide, "Sinon, journal écrit dans journal.txt", "Otherwise, the log goes to journal.txt" },
+    { T_ConsoleAide, "Sinon, journal écrit dans journal.log", "Otherwise, the log goes to journal.log" },
     { T_ClavierAide, "Cliquez sur une commande, puis appuyez sur la touche voulue.", "Click a command, then press the key you want." },
     { T_ParDefaut, "%s (par défaut)", "%s (default)" },
     { T_AppuyerTouche, "Appuyez sur une touche...", "Press a key..." },

@@ -1,4 +1,6 @@
 1 24 "wakfu-installer.manifest"
+// Icône originale du projet (WakfuRecomp.svg, rendu en 16 à 256 px) ; aucune image du jeu
+1 ICON "WakfuRecomp.ico"
 // Police Inter (OFL 1.1) de la fenêtre du lanceur, lue par FindResource (lanceur.cpp)
 INTER_REGULAR RCDATA "Inter-Regular.ttf"
 INTER_SEMIBOLD RCDATA "Inter-SemiBold.ttf"

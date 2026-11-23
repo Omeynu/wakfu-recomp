@@ -15,7 +15,7 @@ WakfuRecomp.exe <paquet ou ISO ou dossier du jeu> [<paquet de la TU 2>]   (ligne
 ```
 
 Sans argument, une fenêtre (Dear ImGui sur SDL2, rendu 2D de SDL ; textes en français ou en anglais selon la langue
-de Windows, tous dans `tools-src/wakfu-installer/textes.cpp`) guide le joueur : accueil (installation normale ou portable),
+de Windows, tous dans `tools-src/wakfu-installer/textes.cpp`) guide le joueur : accueil,
 champs Jeu et Mise à jour (paquet STFS, ISO/XISO ou dossier ; glisser-déposer ou « Parcourir », contrôle immédiat :
 paquet Xbox 360, titre 584109AA, jeu ou mise à jour, TU 2, taille complète),
 vérification (outils, `wakfu-prepare`, SHA-1 de l'image : refus d'une copie non reconnue), recompilation (étape,
@@ -23,7 +23,11 @@ progression de XenonRecomp et de ninja, temps restant estimé), réglages (toute
 `runtime/src/config.cpp`), puis Jouer ; ensuite directement Jouer / Réglages / Recompiler. Journal :
 `<D>\journal-lanceur.txt`. Avec des arguments, la ligne de commande est inchangée (sorties sur la console qui l'a
 lancée, ou sur les sorties redirigées ; l'exécutable étant une application à fenêtre, `cmd.exe` n'attend pas sa fin :
-`start /wait WakfuRecomp.exe ...`). Mode de test caché : `WAKFURECOMP_CAPTURE=<dossier>` enregistre une capture PNG de
+`start /wait WakfuRecomp.exe ...`). Lancé par RecompLauncher (variable `RECOMPLAUNCHER=1`) : ni console ni attente
+d'Entrée, outils et jeu sans fenêtre, lignes sur les sorties standard héritées avec la progression
+`progress <0..1> <étape>` (outils 0–0,05, préparation 0,05–0,15, XenonRecomp 0,15–0,3, configuration et compilation
+0,3–1 au rythme de ninja), copiées dans `<données>\journal-installation.log` (tronqué à chaque lancement) ; journal du
+jeu toujours écrit (`journal.log`) ; code de sortie 1 si l'installation échoue, sinon celui du jeu. Mode de test caché : `WAKFURECOMP_CAPTURE=<dossier>` enregistre une capture PNG de
 chaque écran (états simulés ; `WAKFURECOMP_CAPTURE_REEL=1` : vérification et recompilation réelles), avec
 `WAKFURECOMP_CAPTURE_JEU`, `_TU`, `_MAUVAIS` (fichier refusé), `_REFUS` (`<champ><chemin>|...`, champ 0 jeu ou
 1 mise à jour : une capture par fichier refusé) et `_IMAGES` (dossier `base` du jeu préparé).

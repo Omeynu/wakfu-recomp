@@ -6,7 +6,7 @@ Bug reports, tests on other PCs and pull requests are welcome.
 
 Open an [issue](https://github.com/Omeynu/wakfu-recomp/issues/new/choose) with:
 
-- `%APPDATA%\WakfuRecomp\journal.txt` (its last line, `[sortie] code N : raison`, says why the game stopped)
+- `%APPDATA%\WakfuRecomp\journal.log` (its last line, `[sortie] code N : raison`, says why the game stopped)
   and `config.toml`;
 - your GPU, driver version and OS;
 - a screenshot and one sentence on what you did (menu, zone, action) and what happened.

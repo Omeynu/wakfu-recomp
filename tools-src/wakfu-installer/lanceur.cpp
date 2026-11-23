@@ -447,14 +447,6 @@ struct App
     bool confirmerRecompilation = false, confirmerQuitter = false, quitter = false;
     std::string fatale;
     double gb = -1;
-    // Accueil du premier lancement : choix du mode (installation normale ou portable)
-    bool choixMode = false, modePortable = false;
-    std::string refusPortable;
-    fs::path anciennesDonnees;       // %APPDATA%\WakfuRecomp s'il contient des fichiers (sauvegardes du mode normal)
-    bool copierSauvegardes = true;
-    bool confirmerEcrasement = false, attenteEcrasement = false;
-    int conflits = 0;
-    std::string erreurCopie;
     ImVec2 zoneMin[2], zoneMax[2];   // zones de dépôt « Jeu » et « Mise à jour » (coordonnées de la fenêtre)
     bool garderCompilation = false;  // ménage après installation sauf si coché
     bool iconeBureau = false;        // icône du bureau créée à la fin de l'installation si cochée
@@ -816,59 +808,6 @@ struct App
         return r;
     }
 
-    // Carte de choix du mode (accueil) : cliquable entièrement, bord orange si choisie
-    bool carteMode(const char* id, const char* nom, const char* etiquette, const std::string& aide, bool choisie, float w, float h)
-    {
-        ImVec2 p = ImGui::GetCursorScreenPos();
-        bool clic = ImGui::InvisibleButton(id, ImVec2(w, h));
-        bool survol = ImGui::IsItemHovered();
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 q(p.x + w, p.y + h);
-        dl->AddRectFilled(p, q, u32(choisie ? 0x3A2414 : kChamp, choisie ? 0.95f : 0.75f), S(14));
-        dl->AddRect(p, q, u32(choisie ? kOrange : survol ? kOrangeFonce : kBord, choisie ? 1.0f : 0.7f), S(14), 0, S(choisie ? 2.0f : 1.5f));
-        ImVec2 c(p.x + S(28), p.y + S(32));   // bouton radio
-        dl->AddCircle(c, S(9), u32(choisie ? kOrange : kTexteDoux, choisie ? 1.0f : 0.7f), 0, S(2));
-        if (choisie) dl->AddCircleFilled(c, S(4.5f), u32(kOrange));
-        ImGui::SetCursorScreenPos(ImVec2(p.x + S(48), p.y + S(20)));
-        ImGui::BeginGroup();
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - S(48) - S(20));
-        police(g_semibold, 19);
-        ImGui::TextUnformatted(nom);
-        finPolice();
-        if (etiquette)
-        {
-            ImGui::SameLine(0, S(10));
-            police(g_semibold, 12);
-            ImVec2 t = ImGui::CalcTextSize(etiquette), a = ImGui::GetCursorScreenPos();
-            a.y += S(3);
-            dl->AddRectFilled({ a.x - S(2), a.y - S(1) }, { a.x + t.x + S(14), a.y + t.y + S(5) }, u32(kVert, 0.20f), S(8));
-            dl->AddText({ a.x + S(6), a.y + S(2) }, u32(kVert), etiquette);
-            ImGui::Dummy(ImVec2(t.x + S(14), t.y));
-            finPolice();
-        }
-        ImGui::Dummy(ImVec2(0, S(2)));
-        police(g_regular, 14);
-        ImGui::PushStyleColor(ImGuiCol_Text, rgb(kTexteDoux));
-        ImGui::TextWrapped("%s", aide.c_str());
-        ImGui::PopStyleColor();
-        finPolice();
-        ImGui::PopTextWrapPos();
-        ImGui::EndGroup();
-        ImGui::SetCursorScreenPos(p);   // élément de la taille de la carte : SameLine place la suivante à côté
-        ImGui::Dummy(ImVec2(w, h));
-        return clic;
-    }
-
-    void choisirPortable()
-    {
-        double libre;
-        RefusPortable r = verifierPortable(&libre);
-        journal(fmt("mode portable : vérification %d (%.1f Go libres)", int(r), libre));
-        refusPortable = r == RefusPortable::ProgramFiles ? tr(T_PortableProgramFiles) : r == RefusPortable::OneDrive ? tr(T_PortableOneDrive)
-                      : r == RefusPortable::Ecriture ? tr(T_PortableEcriture) : r == RefusPortable::Espace ? decimale(fmt(tr(T_PortableEspace), libre)) : "";
-        modePortable = r == RefusPortable::Aucun;   // refus : retour à l'installation normale
-    }
-
     std::string decimale(std::string t)   // 41.7 -> 41,7 en français
     {
         if (langueFr()) for (size_t i = 1; i + 1 < t.size(); ++i) if (t[i] == '.' && isdigit((unsigned char)t[i - 1]) && isdigit((unsigned char)t[i + 1])) t[i] = ',';
@@ -883,108 +822,28 @@ struct App
 
     void commencer()
     {
-        if (choixMode && modePortable)
-        {
-            choisirPortable();   // le dossier a pu changer depuis le choix
-            if (!modePortable) return;
-            try { activerPortable(); }
-            catch (const std::exception& e) { refusPortable = e.what(); modePortable = false; return; }
-            journal("mode portable : portable.txt créé à côté de l'exécutable");
-        }
         if (!ouvrirDossier()) return;
-        if (choixMode && modePortable && copierSauvegardes && !anciennesDonnees.empty())
-        {
-            conflits = compterConflits(anciennesDonnees, data);
-            choixMode = false;
-            if (conflits > 0) { confirmerEcrasement = attenteEcrasement = true; return; }   // suite après la réponse
-            copier(false);
-        }
-        choixMode = false;
         if (ecran == Ecran::Accueil) ecran = Ecran::Choix;
-    }
-
-    // Copie des sauvegardes du mode normal vers les données du mode portable : rien n'est supprimé ; un fichier
-    // existant n'est remplacé qu'après confirmation (remplacer).
-    static int compterConflits(const fs::path& src, const fs::path& dst)
-    {
-        int n = 0;
-        std::error_code ec;
-        for (auto it = fs::recursive_directory_iterator(src, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
-        {
-            std::error_code e2;
-            if (it->is_regular_file(e2) && fs::exists(dst / it->path().lexically_relative(src), e2)) ++n;
-        }
-        return n;
-    }
-
-    void copier(bool remplacer)
-    {
-        int copies = 0;
-        std::string err;
-        std::error_code ec;
-        for (auto it = fs::recursive_directory_iterator(anciennesDonnees, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
-        {
-            fs::path d = data / it->path().lexically_relative(anciennesDonnees);
-            std::error_code e2;
-            if (it->is_directory(e2)) fs::create_directories(d, e2);
-            else if (it->is_regular_file(e2))
-            {
-                fs::create_directories(d.parent_path(), e2);
-                if (fs::copy_file(it->path(), d, remplacer ? fs::copy_options::overwrite_existing : fs::copy_options::skip_existing, e2)) ++copies;
-            }
-            if (e2 && err.empty()) err = u8(it->path()) + " : " + e2.message();
-        }
-        if (ec && err.empty()) err = u8(anciennesDonnees) + " : " + ec.message();
-        journal(fmt("sauvegardes : %d fichier(s) copié(s) de %s vers %s%s", copies, u8(anciennesDonnees).c_str(), u8(data).c_str(),
-                    remplacer ? " (remplacement confirmé)" : ""));
-        if (!err.empty()) { erreurCopie = fmt(tr(T_ErrCopieSauvegardes), err.c_str()); journal(erreurCopie); }
     }
 
     void ecranAccueil()
     {
-        const float hCarte = choixMode ? 640 : 470;
-        float w = carte("accueil", 0, hCarte);
-        ImGui::Dummy(ImVec2(0, S(choixMode ? 0 : 8)));
-        titre(tr(T_Bienvenue), choixMode ? 30 : 34);
-        ImGui::Dummy(ImVec2(0, S(choixMode ? 4 : 10)));
-        police(g_regular, choixMode ? 16 : 18);
+        carte("accueil", 0, 470);
+        ImGui::Dummy(ImVec2(0, S(8)));
+        titre(tr(T_Bienvenue), 34);
+        ImGui::Dummy(ImVec2(0, S(10)));
+        police(g_regular, 18);
         ImGui::TextWrapped("%s", tr(T_AccueilIntro));
         finPolice();
-        ImGui::Dummy(ImVec2(0, S(choixMode ? 12 : 26)));
+        ImGui::Dummy(ImVec2(0, S(26)));
         const Texte etapes[] = { T_AccueilEtape1, T_AccueilEtape2, T_AccueilEtape3 };
         for (int i = 0; i < 3; ++i)
         {
             icone(Icone::Numero, i + 1);
-            police(g_regular, choixMode ? 16 : kTexteTaille);
+            police(g_regular, kTexteTaille);
             ImGui::TextUnformatted(tr(etapes[i]));
             finPolice();
-            ImGui::Dummy(ImVec2(0, S(choixMode ? 2 : 10)));
-        }
-        if (choixMode)
-        {
             ImGui::Dummy(ImVec2(0, S(10)));
-            police(g_semibold, 17);
-            ImGui::TextUnformatted(tr(T_OuInstaller));
-            finPolice();
-            ImGui::Dummy(ImVec2(0, S(2)));
-            const float cw = (w - S(16)) * 0.5f, ch = S(124);
-            if (carteMode("##normal", tr(T_InstNormale), tr(T_Recommande), tr(T_InstNormaleAide), !modePortable, cw, ch))
-                modePortable = false, refusPortable.clear();
-            ImGui::SameLine(0, S(16));
-            std::string aide = fmt(tr(T_InstPortableAide), cheminWin(portableDir()).c_str());
-            if (carteMode("##portable", tr(T_InstPortable), nullptr, aide, modePortable, cw, ch) && !modePortable) choisirPortable();
-            ImGui::Dummy(ImVec2(0, S(6)));
-            if (!refusPortable.empty())
-            {
-                icone(Icone::Erreur);
-                texteCouleur(kRouge, refusPortable.c_str(), nullptr, 15);
-            }
-            else if (modePortable && !anciennesDonnees.empty())
-            {
-                police(g_regular, 15);
-                ImGui::Checkbox(fmt(tr(T_CopierSauvegardes), cheminWin(anciennesDonnees).c_str()).c_str(), &copierSauvegardes);
-                finPolice();
-            }
         }
         if (piedCarte(nullptr, tr(T_Commencer), true, nullptr, tr(T_AccueilNote)) == 2) commencer();
         finCarte();
@@ -1046,12 +905,6 @@ struct App
             ImGui::Dummy(ImVec2(0, S(10)));
             icone(Icone::Erreur);
             texteCouleur(kRouge, refus.c_str(), nullptr, 15);
-        }
-        if (!erreurCopie.empty())
-        {
-            ImGui::Dummy(ImVec2(0, S(6)));
-            icone(Icone::Attention);
-            texteCouleur(kJaune, erreurCopie.c_str(), nullptr, 15);
         }
         int b = piedCarte(tr(T_Retour), tr(T_Recompiler), jeu.ok && maj.ok);   // grisé tant que les deux champs ne sont pas ✔
         if (b == 1) ecran = Ecran::Accueil;
@@ -1404,14 +1257,14 @@ struct App
         titre(tr(T_Reglages));
         if (finRecompilation) { ImGui::Dummy(ImVec2(0, S(2))); icone(Icone::Ok); texteCouleur(kVert, tr(T_ProgFini), nullptr, 16); }
         if (!erreurConfig.empty()) { icone(Icone::Erreur); texteCouleur(kRouge, erreurConfig.c_str(), nullptr, 15); }
-        {   // mode d'installation et dossier des données
+        {   // dossier des données
             const char* ouvrirTxt = tr(T_OuvrirDossier);
             float wb = largeurBouton(ouvrirTxt);
             police(g_regular, 14);
             ImGui::AlignTextToFramePadding();
             ImGui::PushStyleColor(ImGuiCol_Text, rgb(kTexteDoux));
             ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - wb - S(16));
-            ImGui::TextWrapped("%s", fmt(tr(T_ModeInstallation), tr(portableMode() ? T_InstPortable : T_InstNormale), cheminWin(data).c_str()).c_str());
+            ImGui::TextWrapped("%s", fmt(tr(T_Donnees), cheminWin(data).c_str()).c_str());
             ImGui::PopTextWrapPos();
             ImGui::PopStyleColor();
             finPolice();
@@ -1503,7 +1356,7 @@ struct App
             icone(Icone::Erreur);
             ImGui::BeginGroup();
             texteCouleur(kRouge, messageJeu.c_str(), g_semibold, 16);
-            fs::path j = data / "journal.txt";
+            fs::path j = data / "journal.log";
             std::error_code ec;
             if (fs::exists(j, ec) && bouton(tr(T_VoirJournalJeu), false)) ouvrir(j);
             ImGui::EndGroup();
@@ -1549,10 +1402,9 @@ struct App
         ImGui::Unindent(S(36));
     }
 
-    void casesInstallation()   // avant la recompilation : ménage, icône du bureau (mode normal)
+    void casesInstallation()   // avant la recompilation : ménage, icône du bureau
     {
         caseGarder();
-        if (portableMode()) return;
         police(g_regular, 15);
         ImGui::Checkbox(tr(T_IconeBureau), &iconeBureau);
         finPolice();
@@ -1765,21 +1617,10 @@ struct App
         if (popup("recomp", tr(T_ConfirmRecompTitre), tr(T_ConfirmRecomp), tr(T_Recompiler), &confirmerRecompilation, true)) construire(true);
         if (popup("sauvegardes", tr(T_ConfirmSauvTitre), tr(T_ConfirmSauv), tr(T_Supprimer), &confirmerSauvegardes)) { effacerSauvegardes = true; listerDesinstallation(); }
         if (popup("quitter", tr(T_QuitterTitre), tr(T_Quitter), tr(T_QuitterOui), &confirmerQuitter)) quitter = true;
-        if (attenteEcrasement)   // sauvegardes déjà présentes dans userdata : remplacer, ou garder (Annuler)
-        {
-            std::string t = fmt(tr(T_Ecraser), conflits, cheminWin(data).c_str(), cheminWin(anciennesDonnees).c_str());
-            bool oui = popup("ecraser", tr(T_EcraserTitre), t.c_str(), tr(T_Remplacer), &confirmerEcrasement);
-            if (oui || !confirmerEcrasement)
-            {
-                attenteEcrasement = false;
-                copier(oui);
-                if (ecran == Ecran::Accueil) ecran = Ecran::Choix;
-            }
-        }
         ImGui::End();
     }
 
-    // Dossier de travail (mode lu maintenant : portable.txt a pu être créé par l'accueil), journal, données
+    // Dossier de travail, journal, données
     bool ouvrirDossier()
     {
         try
@@ -1791,14 +1632,14 @@ struct App
                 if (g_t.journal) std::fclose(g_t.journal);
                 g_t.journal = ouvrirJournal(journalPath);
             }
-            journal("==== WakfuRecomp (fenêtre), outils " + in.id + (portableMode() ? ", mode portable" : ""));
+            journal("==== WakfuRecomp (fenêtre), outils " + in.id);
             {
                 std::lock_guard l(g_t.m);
                 if (g_t.journal && !g_t.avantJournal.empty()) { std::fputs(g_t.avantJournal.c_str(), g_t.journal); std::fflush(g_t.journal); }
                 g_t.avantJournal.clear();
             }
             data = dataDir(in.D);
-            if (!portableMode() && !fs::exists(raccourciMenu()))   // entrée de menu (Démarrer / applications), mode normal
+            if (!fs::exists(raccourciMenu()))   // entrée de menu (Démarrer / applications)
                 try { creerRaccourci(raccourciMenu(), in); journal("entrée de menu : " + u8(raccourciMenu())); }
                 catch (const std::exception& e) { journal(std::string("ERREUR : ") + e.what()); }
             chargerReglages();
@@ -1840,17 +1681,12 @@ struct App
 
     void demarrerSuite()
     {
-        // Premier lancement (ni portable.txt ni dossier de l'installation normale) : choix du mode à l'accueil,
-        // avant de créer quoi que ce soit
+        // Premier lancement : accueil, avant de créer quoi que ce soit
         bool premier = false;
-        try { premier = !portableMode() && !fs::exists(defaultWorkDir() / ".wakfurecomp"); }
+        try { premier = !fs::exists(defaultWorkDir() / ".wakfurecomp"); }
         catch (const std::exception&) {}   // LOCALAPPDATA absent : erreur affichée par ouvrirDossier
         if (!premier) { ouvrirDossier(); return; }
-        choixMode = true;
-        std::error_code ec;
-        fs::path a = appDataDir();
-        if (!a.empty() && fs::is_directory(a, ec) && !fs::is_empty(a, ec)) anciennesDonnees = a;
-        journal("premier lancement : choix du mode" + (anciennesDonnees.empty() ? std::string() : ", données existantes dans " + u8(a)));
+        journal("premier lancement : accueil");
     }
 
     // ---- Capture d'écrans (tests) : WAKFURECOMP_CAPTURE=<dossier> ----
@@ -1900,14 +1736,7 @@ struct App
             capturesFinales(true);
             return;
         }
-        // Accueil du premier lancement : choix du mode ; portable vérifié pour de vrai (dossier de l'exécutable)
-        pas.push_back({ "01-accueil-choix-mode", [this] { ecran = Ecran::Accueil; choixMode = true; modePortable = false; refusPortable.clear(); }, aucun });
-        pas.push_back({ "01b-accueil-portable", [this] { choisirPortable(); }, aucun });
-        pas.push_back({ "01c-accueil-copie-sauvegardes", [this] {   // état simulé : portable accepté, sauvegardes trouvées
-            modePortable = true, refusPortable.clear(), copierSauvegardes = true;
-            if (anciennesDonnees.empty()) anciennesDonnees = appDataDir();
-        }, aucun });
-        pas.push_back({ "01d-accueil-sans-choix", [this] { choixMode = false; }, aucun });
+        pas.push_back({ "01-accueil", [this] { ecran = Ecran::Accueil; }, aucun });
         pas.push_back({ "02-choix-vide", [this] {
             if (in.D.empty()) ouvrirDossier();   // premier lancement : installation normale (capture seulement)
             ecran = Ecran::Choix; jeu = maj = {};
@@ -1980,13 +1809,8 @@ struct App
         pas.push_back({ "17-jouer", [this] { ongletForce = -1; attenteTouche = -1; c.keys.clear(); ecran = Ecran::Jouer; }, aucun });
         pas.push_back({ "18-jouer-plantage", [this] { codeJeu = 6; finJeu(); }, aucun });
         pas.push_back({ "19-confirmer-recompilation", [this] { messageJeu.clear(); confirmerRecompilation = true; }, aucun });
-        pas.push_back({ "20-remplacer-sauvegardes", [this] {   // état simulé : réponse jamais donnée (rien n'est copié)
-            ecran = Ecran::Accueil; choixMode = false; confirmerRecompilation = false;
-            conflits = 3; confirmerEcrasement = attenteEcrasement = true;
-            if (anciennesDonnees.empty()) anciennesDonnees = appDataDir();
-        }, aucun });
         pas.push_back({ "21-verification-cases", [this] {   // état simulé : vérification réussie (cases ménage / bureau)
-            confirmerEcrasement = attenteEcrasement = false; ecran = Ecran::Verification; job = Job::Aucun;
+            confirmerRecompilation = false; ecran = Ecran::Verification; job = Job::Aucun;
             faux(EtPreparation, -1, 0); { std::lock_guard l(g_t.m); g_t.fin.clear(); } verifOk = true; dejaPrepare = false; gb = 41.7;
         }, aucun });
         pas.push_back({ "22-anciennes", [this] {   // état simulé si aucune ancienne installation réelle

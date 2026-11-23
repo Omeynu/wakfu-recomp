@@ -120,7 +120,7 @@ std::string Serialize(const Config& c) {
          "entree_arriere_plan = " << b(c.backgroundInput) << "   # manette lue quand la fenêtre n'a pas le focus\n\n"
          "[confort]\n"
          "passer_logos = " << b(c.skipLogos) << "   # sauter les logos d'introduction\n"
-         "console = " << b(c.console) << "   # Windows : console du journal (false : journal dans journal.txt)\n\n"
+         "console = " << b(c.console) << "   # Windows : console du journal (false : journal dans journal.log)\n\n"
          "[jeu]\n"
          "langue = " << q(c.langue) << "   # auto (langue du système) | fr | en | de | es | it | ja\n\n"
          "[touches]\n"

@@ -24,9 +24,11 @@
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include "../../runtime/src/config.h"   // pas de -I runtime/src (cf. lanceur.cpp)
+#include "../../runtime/src/png.h"
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <atomic>
@@ -59,6 +61,8 @@ constexpr const char* kExe = "";
 constexpr const char* kSdk = "xenonrecomp";   // sources complètes (même arborescence XenonUtils, thirdparty/simde)
 std::atomic<pid_t> g_enfant{ 0 };   // groupe de processus de l'outil en cours (arrêté si le lanceur se ferme)
 #endif
+// RECOMPLAUNCHER=1 : lancé par RecompLauncher (>= 0.9.3), sans console (SuiviRecompLauncher)
+const bool g_recompLauncher = [] { const char* v = std::getenv("RECOMPLAUNCHER"); return v && std::strcmp(v, "1") == 0; }();
 using Arg = fs::path::string_type;   // argument de ligne de commande (wstring sous Windows)
 fs::path exe(fs::path p) { p += kExe; return p; }
 
@@ -237,9 +241,11 @@ std::wstring quote(const std::wstring& a)
 }
 
 // Ligne de commande : les outils écrivent sur la console (ou les sorties redirigées) du lanceur.
-// Fenêtre : sortie lue par un tube et envoyée au suivi (journal, progression), sans fenêtre de console,
-// dans le job du lanceur. jeu = wakfu.exe lancé depuis la fenêtre : ni tube ni job (sa propre console).
-int runProcess(const std::vector<Arg>& args, const fs::path& cwd = {}, bool jeu = false)
+// Fenêtre et RecompLauncher : sortie lue par un tube et envoyée au suivi (journal, progression), sans fenêtre de
+// console, dans le job du lanceur. jeu = wakfu.exe : ni tube ni job (fenêtre : sa propre console ; RecompLauncher :
+// sans fenêtre, sorties héritées).
+// sansConsole (jeu, option console = false) : aucune console créée, pas même un instant (le journal va dans journal.log).
+int runProcess(const std::vector<Arg>& args, const fs::path& cwd = {}, bool jeu = false, bool sansConsole = false)
 {
     std::wstring cmd;
     for (auto& a : args) cmd += (cmd.empty() ? L"" : L" ") + quote(a);
@@ -258,7 +264,7 @@ int runProcess(const std::vector<Arg>& args, const fs::path& cwd = {}, bool jeu 
         si.hStdOutput = si.hStdError = wr;
         flags = CREATE_NO_WINDOW | CREATE_SUSPENDED;
     }
-    else if (!g_suivi && !GetConsoleWindow())
+    else if ((!g_suivi || g_recompLauncher) && !GetConsoleWindow())
     {
         // Ligne de commande sans console (sorties redirigées : tests) : l'exécutable est une application à fenêtre,
         // ses descripteurs standard sont donc passés explicitement, et les outils ne doivent pas ouvrir de console.
@@ -268,6 +274,7 @@ int runProcess(const std::vector<Arg>& args, const fs::path& cwd = {}, bool jeu 
         si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
         flags = CREATE_NO_WINDOW;
     }
+    if (jeu && sansConsole) flags |= CREATE_NO_WINDOW;
     BOOL ok = CreateProcessW(args[0].c_str(), cmd.data(), nullptr, nullptr, TRUE, flags, nullptr,
                              cwd.empty() ? nullptr : cwd.c_str(), &si, &pi);
     DWORD err = GetLastError();
@@ -306,7 +313,7 @@ int runProcess(const std::vector<Arg>& args, const fs::path& cwd = {}, bool jeu 
 // Ligne de commande : sorties héritées. Fenêtre : sortie lue par un tube et envoyée au suivi ; l'outil a son propre
 // groupe de processus (arrêté avec ses enfants par quitterDeSuite) et meurt avec le lanceur (PR_SET_PDEATHSIG).
 // jeu : ni tube ni groupe. Commande sans « / » : cherchée dans PATH (outils du système).
-int runProcess(const std::vector<Arg>& args, const fs::path& cwd = {}, bool jeu = false)
+int runProcess(const std::vector<Arg>& args, const fs::path& cwd = {}, bool jeu = false, bool = false)
 {
     const bool capture = g_suivi && !jeu;
     int fd[2] = { -1, -1 };
@@ -363,7 +370,7 @@ Arg w(const fs::path& p) { return p.native(); }
 Arg wdef(const char* name, const fs::path& p) { return A("-D") + fs::path(name).native() + A("=") + fromU8(u8(p)).native(); }
 void etape(Etape e) { if (g_suivi) g_suivi->etape(e); }
 
-// Un cache CMake fait depuis un autre emplacement (dossier portable déplacé) bloque cmake : build refait
+// Un cache CMake fait depuis un autre emplacement (dossier de travail déplacé) bloque cmake : build refait
 void propre(const fs::path& D, const fs::path& source, const fs::path& build)
 {
     std::ifstream f(build / "CMakeCache.txt");
@@ -437,24 +444,6 @@ bool isInside(const fs::path& p, const fs::path& dir)
     return !r.empty() && *r.begin() != "..";
 }
 
-#ifdef _WIN32
-// p est dir ou dans dir, casse ignorée (chemins Windows)
-bool sousDossier(const fs::path& p, const fs::path& dir)
-{
-    std::error_code ec;
-    std::wstring a = fs::weakly_canonical(p, ec).wstring(), b = fs::weakly_canonical(dir, ec).wstring();
-    if (a.empty() || b.empty()) return false;
-    for (auto* x : { &a, &b })
-    {
-        std::replace(x->begin(), x->end(), L'/', L'\\');
-        CharLowerBuffW(x->data(), DWORD(x->size()));
-        while (x->size() > 1 && x->back() == L'\\') x->pop_back();
-    }
-    return a.compare(0, b.size(), b) == 0 && (a.size() == b.size() || a[b.size()] == L'\\');
-}
-
-#endif
-
 // Ligne de commande : entrées refusées avant toute extraction, avec la cause (mêmes contrôles que la fenêtre)
 void verifierEntrees(const std::vector<fs::path>& inputs)
 {
@@ -494,8 +483,6 @@ int usage()
         "                         ou un dossier qui contient ces fichiers. Glisser-déposer sur l'exécutable fonctionne.\n"
         "  --dossier <D>  : dossier de travail (défaut %%LOCALAPPDATA%%\\WakfuRecomp, Linux ~/.local/share/wakfu-recomp ;\n"
         "                   prévoir ~3 Go libres)\n"
-        "Mode portable : un fichier portable.txt à côté de WakfuRecomp -> dossier de travail et données\n"
-        "  (sauvegardes, réglages) dans <dossier du lanceur>/WakfuRecomp.\n"
         "  --sans-lancer  : ne pas lancer le jeu à la fin\n"
         "Rendu natif Vulkan (shaders du jeu compilés en SPIR-V à l'installation).\n"
         "Sans argument : fenêtre du lanceur (choix du jeu, recompilation, réglages, jeu, désinstallation).\n");
@@ -519,14 +506,6 @@ fs::path selfPath()
 #endif
 }
 
-// Mode portable : un fichier portable.txt à côté de WakfuRecomp.exe ; dossier de travail et données à côté de l'exe.
-// Relu à chaque appel : la fenêtre crée portable.txt quand le joueur choisit ce mode.
-bool portableMode()
-{
-    std::error_code ec;
-    return fs::exists(selfPath().parent_path() / "portable.txt", ec);
-}
-
 fs::path appDataDir()
 {
 #ifdef _WIN32
@@ -547,49 +526,8 @@ fs::path dataHome()   // ~/.local/share (ou $XDG_DATA_HOME)
 }
 #endif
 
-RefusPortable verifierPortable(double* gb)
-{
-    *gb = -1;
-    const fs::path dir = selfPath().parent_path();
-#ifndef _WIN32
-    fs::path t = dir / (".wakfurecomp-test-" + std::to_string(getpid()) + ".tmp");
-    int f = open(t.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-    if (f < 0) return RefusPortable::Ecriture;
-    bool ok = write(f, "x", 1) == 1;
-    close(f);
-    unlink(t.c_str());
-    if (!ok) return RefusPortable::Ecriture;
-#else
-    for (const wchar_t* v : { L"ProgramFiles", L"ProgramFiles(x86)", L"ProgramW6432" })
-        if (fs::path p = envPath(v); !p.empty() && sousDossier(dir, p)) return RefusPortable::ProgramFiles;
-    for (const wchar_t* v : { L"OneDrive", L"OneDriveConsumer", L"OneDriveCommercial" })
-        if (fs::path p = envPath(v); !p.empty() && sousDossier(dir, p)) return RefusPortable::OneDrive;
-    // Fichier test (supprimé à la fermeture), nom propre à ce processus : rien d'existant n'est touché
-    fs::path t = dir / (".wakfurecomp-test-" + std::to_string(GetCurrentProcessId()) + ".tmp");
-    HANDLE h = CreateFileW(t.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return RefusPortable::Ecriture;
-    DWORD n = 0;
-    bool ok = WriteFile(h, "x", 1, &n, nullptr) && n == 1;
-    CloseHandle(h);
-    if (!ok) return RefusPortable::Ecriture;
-#endif
-    *gb = freeGb(dir);
-    return *gb >= 0 && *gb < 3 ? RefusPortable::Espace : RefusPortable::Aucun;
-}
-
-void activerPortable()
-{
-    fs::path p = selfPath().parent_path() / "portable.txt";
-    std::ofstream o(p, std::ios::binary | std::ios::app);   // jamais tronqué : un portable.txt existant est gardé
-    if (!o || !o.flush() || !portableMode()) throw Error("création impossible : " + u8(p));
-}
-
-// Linux : le lanceur WakfuRecomp est souvent dans un dossier WakfuRecomp (archive) : nom en minuscules
-fs::path portableDir() { return selfPath().parent_path() / (kExe[0] ? "WakfuRecomp" : "wakfu-recomp"); }
-
 fs::path defaultWorkDir()
 {
-    if (portableMode()) return portableDir();
 #ifdef _WIN32
     fs::path la = envPath(L"LOCALAPPDATA");
     if (la.empty()) throw Error("LOCALAPPDATA non défini : utiliser --dossier <D>");
@@ -620,24 +558,27 @@ void openWorkDir(Install& in, fs::path D)
     in.bin = in.T / "bin";
 }
 
-// Données du joueur (sauvegardes, réglages, config.toml) : %APPDATA%\WakfuRecomp (itinérant), sinon (ou en mode
-// portable) <D>\userdata.
+// Données du joueur (sauvegardes, réglages, config.toml) : %APPDATA%\WakfuRecomp (itinérant), sinon <D>\userdata.
 // Première fois : l'ancien <D>\userdata est copié (jamais supprimé), pour ne perdre aucune sauvegarde.
+// Ancien mode portable (retiré) : sauvegardes de <exe>\WakfuRecomp (Linux <exe>/wakfu-recomp) copiées une fois.
 // Seul point de calcul du dossier des données (ligne de commande, fenêtre, jouer.cmd).
 
 fs::path dataDir(const fs::path& D)
 {
-    fs::path a = portableMode() ? fs::path() : appDataDir().parent_path();
-    if (a.empty()) { fs::create_directories(D / "userdata"); return D / "userdata"; }
-    fs::path target = a / "WakfuRecomp";
+    fs::path a = appDataDir().parent_path();
+    fs::path target = a.empty() ? D / "userdata" : a / "WakfuRecomp";
     std::error_code ec;
-    if (!fs::exists(target) && fs::is_directory(D / "userdata") && !fs::is_empty(D / "userdata", ec))
+    if (!a.empty() && !fs::exists(target) && fs::is_directory(D / "userdata") && !fs::is_empty(D / "userdata", ec))
     {
         fs::copy(D / "userdata", target, fs::copy_options::recursive, ec);
         if (ec) throw Error("copie de " + u8(D / "userdata") + " vers " + u8(target) + " : " + ec.message());
         say("Données copiées vers %s (l'ancien dossier est conservé)\n", u8(target).c_str());
     }
     fs::create_directories(target);
+    const fs::path ancien = selfPath().parent_path() / (kExe[0] ? "WakfuRecomp" : "wakfu-recomp");
+    if (int64_t n = migrerPortable(ancien, target); n >= 0)
+        say("Ancien mode portable : %lld fichier(s) copié(s) de %s vers %s (fichiers existants gardés, ancien dossier conservé)\n",
+            (long long)n, u8(ancien / "userdata").c_str(), u8(target).c_str());
     return target;
 }
 
@@ -754,7 +695,8 @@ std::vector<wk::config::GpuVu> gpusVulkan()
 }
 
 // Journal du lanceur : GPU que le jeu choisira (même règle, config::ChoisirGpu) et multi-échantillonnage retenu.
-void journalGpu(const fs::path& data)
+// Rend les options lues (défauts si config.toml est absent).
+wk::config::Config journalGpu(const fs::path& data)
 {
     wk::config::Config c;
     std::ifstream f(data / "config.toml");
@@ -770,19 +712,20 @@ void journalGpu(const fs::path& data)
     for (const auto& g : gpus) say("[gpu] vu : %s (%s%s)\n", g.nom.c_str(), type(g.type), g.vulkan13 ? "" : ", sans Vulkan 1.3");
     bool trouve = true;
     const int i = wk::config::ChoisirGpu(gpus, c.gpu, &trouve);
-    if (i < 0) { say("[gpu] aucun GPU Vulkan 1.3 détecté\n"); return; }
+    if (i < 0) { say("[gpu] aucun GPU Vulkan 1.3 détecté\n"); return c; }
     const bool msaa = wk::config::MsaaActif(c.msaa, gpus[i].type);
     say("[gpu] retenu : %s (%s, %s) ; multi-échantillonnage %s (%s)\n", gpus[i].nom.c_str(), type(gpus[i].type),
         c.gpu.empty() ? "choix automatique" : trouve ? "option gpu" : "option gpu introuvable, choix automatique",
         msaa ? "activé" : "désactivé",
         c.msaa != "auto" ? "choix du joueur" : gpus[i].type == 2 ? "auto : GPU dédié" : "auto : pas de GPU dédié");
+    return c;
 }
 
 int launchGame(const Install& in)
 {
     const fs::path& D = in.D, g = D / "work" / "game";
     const fs::path data = dataDir(D);
-    journalGpu(data);
+    const bool console = journalGpu(data).console;
     natifShaders(in);   // conteneurs déposés par le jeu au lancement précédent
     const fs::path N = in.T / "natif";   // outils pour traduire au vol les shaders créés par le jeu (gardés par menage)
 #ifdef _WIN32
@@ -796,11 +739,11 @@ int launchGame(const Install& in)
     setenv("XENOS_INCLUDE", (N / "shader_common.h").c_str(), 1);
     setenv("DXC", (N / "dxc" / "bin" / "dxc").c_str(), 1);
     setenv("DXC_LIB", (N / "dxc" / "lib").c_str(), 1);
-    setenv("WAKFU_JOURNAL", "1", 1);   // stderr du jeu vers <données>/journal.txt (runtime, DetachConsole)
+    setenv("WAKFU_JOURNAL", "1", 1);   // stderr du jeu vers <données>/journal.log (runtime, DetachConsole)
 #endif
     say("Lancement : %s (données et journal : %s)\n", u8(exe(D / "wakfu")).c_str(), u8(data).c_str());
     return runProcess({ w(exe(D / "wakfu")), w(g / "patched" / "image.bin"), w(g / "patched" / "default.xex"),
-                        w(g / "base"), w(g / "tu2"), w(data) }, D, true);
+                        w(g / "base"), w(g / "tu2"), w(data) }, D, true, !console);
 }
 
 #ifndef _WIN32
@@ -977,13 +920,18 @@ void buildGame(Install& in)
         say("[4/5] Configuration (CMake)\n");
 #ifdef _WIN32
         fs::path L = T / "llvm-mingw" / "bin";
+        // Icône de wakfu.exe tirée du jeu du joueur ; sans elle, le jeu se compile quand même
+        const fs::path ico = W / "wakfu.ico";
+        const bool icone = PngVersIco(u8(G / "base" / "TitleIcon.png"), u8(ico));
+        if (!icone) say("Icône du jeu non créée (TitleIcon.png absent ou illisible) : wakfu.exe sans icône.\n");
         step("configuration CMake", { w(T / "cmake" / "bin" / "cmake.exe"), L"-S", w(T / "src" / "runtime"), L"-B", w(build), L"-G", L"Ninja",
             wdef("CMAKE_MAKE_PROGRAM", bin / "ninja.exe"), L"-DCMAKE_BUILD_TYPE=Release",
             wdef("CMAKE_C_COMPILER", L / "clang.exe"), wdef("CMAKE_CXX_COMPILER", L / "clang++.exe"),
             wdef("PPC_DIR", W / "out" / "ppc"), wdef("SIMDE_DIR", sdk / "thirdparty" / "simde"), wdef("GEN_DIR", W / "gen"),
             wdef("glslang_DIR", T / "deps" / "glslang" / "lib" / "cmake" / "glslang"),
             wdef("SDL2_DIR", T / "deps" / "SDL2" / "lib" / "cmake" / "SDL2"),
-            wdef("FFMPEG_PREFIX", T / "deps" / "ffmpeg"), wdef("VULKAN_SYS_INCLUDE", T / "deps" / "vulkan" / "include") }, W);
+            wdef("FFMPEG_PREFIX", T / "deps" / "ffmpeg"), wdef("VULKAN_SYS_INCLUDE", T / "deps" / "vulkan" / "include"),
+            wdef("CMAKE_RC_COMPILER", L / "x86_64-w64-mingw32-windres.exe"), wdef("GAME_ICON", icone ? ico : fs::path()) }, W);
 #else
         step("configuration CMake", { "cmake", "-S", w(T / "src" / "runtime"), "-B", w(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
             "-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++",
@@ -991,8 +939,8 @@ void buildGame(Install& in)
 #endif
         std::ofstream(build / ".outils") << in.id;
     }
-    etape(EtCompilation);
     say("[4/5] Compilation du jeu (long : plusieurs minutes à une heure selon le processeur)\n");
+    etape(EtCompilation);   // après « [4/5] », qui ressemble à une ligne de ninja « [n/N] » (progression)
 #ifdef _WIN32
     const fs::path cmake = T / "cmake" / "bin" / "cmake.exe";
 #else
@@ -1105,7 +1053,7 @@ void creerRaccourci(const fs::path& lien, const Install& in)
 
 namespace {
 
-void supprimerFichier(const fs::path& p)   // fichier seul (raccourci, portable.txt) : jamais un dossier ni un lien suivi
+void supprimerFichier(const fs::path& p)   // fichier seul (raccourci) : jamais un dossier ni un lien suivi
 {
     std::error_code ec;
     auto s = fs::symlink_status(p, ec);
@@ -1132,17 +1080,16 @@ std::vector<fs::path> aDesinstaller(const Install& in, bool garder)
         if (!contientLanceur(it->path())) r.push_back(it->path());
     }
     std::vector<fs::path> donnees = { in.D / "userdata" };
-    if (fs::path a = appDataDir(); !portableMode() && !a.empty() && fs::is_directory(a, ec)) donnees.push_back(a);
+    if (fs::path a = appDataDir(); !a.empty() && fs::is_directory(a, ec)) donnees.push_back(a);
     for (auto& d : donnees)
     {
         if (!fs::is_directory(d, ec) || (d == in.D / "userdata" && !garder)) continue;
         if (!garder) { if (!contientLanceur(d)) r.push_back(d); continue; }
-        for (const char* j : { "journal.txt", "journal.1.txt", "journal.2.txt", "cache" })   // journaux et cache de shaders du jeu, même si sauvegardes gardées
+        for (const char* j : { "journal.log", "journal.1.log", "journal.2.log", "cache" })   // journaux et cache de shaders du jeu, même si sauvegardes gardées
             if (fs::exists(d / j, ec)) r.push_back(d / j);
     }
     for (const fs::path& l : { raccourciMenu(), raccourciBureau() })
         if (!l.empty() && fs::exists(fs::symlink_status(l, ec))) r.push_back(l);
-    if (portableMode()) r.push_back(selfPath().parent_path() / "portable.txt");
     return r;
 }
 
@@ -1154,7 +1101,7 @@ void desinstaller(const Install& in, bool garder)
     {
         if (isInside(p, in.D)) supprimerDans(in.D, p, &gardes);
         else if (!a.empty() && (p == a || isInside(p, a))) supprimerDans(a, p, &gardes);
-        else supprimerFichier(p);   // raccourcis, portable.txt
+        else supprimerFichier(p);   // raccourcis
     }
     for (auto& g : gardes) say("fichier d'entrée gardé : %s\n", u8(g).c_str());
     std::error_code ec;
@@ -1245,6 +1192,69 @@ std::string inputsStamp(const std::vector<fs::path>& inputs)
     return s.str();
 }
 
+// RecompLauncher (RECOMPLAUNCHER=1) : lignes de l'installateur et des outils sur stdout et dans
+// <données>/journal-installation.log, progression « progress <0..1> <étape> » par tranches fixes.
+class SuiviRecompLauncher : public Suivi
+{
+public:
+    void etape(Etape e) override { e_ = e; progression(0, true); }
+    void avance(double f) override { progression(f, false); }
+    void ligne(const std::string& s) override
+    {
+        for (size_t a = 0; a < s.size();)   // une ligne par morceau terminé par \n ou \r
+        {
+            size_t b = s.find_first_of("\r\n", a);
+            if (b == std::string::npos) b = s.size();
+            if (b > a) ecrire(s.substr(a, b - a));
+            a = b + 1;
+        }
+    }
+    void ouvrir(const fs::path& p)   // journal tronqué à chaque lancement ; lignes déjà écrites recopiées
+    {
+#ifdef _WIN32
+        journal_ = _wfopen(p.c_str(), L"wb");
+#else
+        journal_ = std::fopen(p.c_str(), "wb");
+#endif
+        if (!journal_) { ecrire("journal impossible à créer : " + u8(p)); return; }
+        std::fputs(avant_.c_str(), journal_);
+        std::fflush(journal_);
+        avant_.clear();
+    }
+
+private:
+    Etape e_ = EtOutils;
+    double dernier_ = -1;
+    FILE* journal_ = nullptr;
+    std::string avant_;   // lignes écrites avant l'ouverture du journal
+
+    void ecrire(const std::string& l)
+    {
+        std::printf("%s\n", l.c_str());
+        std::fflush(stdout);
+        if (journal_) { std::fprintf(journal_, "%s\n", l.c_str()); std::fflush(journal_); }
+        else if (avant_.size() < 65536) avant_ += l + "\n";
+        unsigned n, N;   // ninja : « [n/N] Building CXX object ... »
+        if (e_ == EtCompilation && l[0] == '[' && std::sscanf(l.c_str(), "[%u/%u]", &n, &N) == 2 && N > 0) progression(double(n) / N, false);
+        float pc;   // XenonRecomp : « Recompiling functions... 13.4% »
+        if (e_ == EtXenon && std::sscanf(l.c_str(), "Recompiling functions... %f%%", &pc) == 1) progression(pc / 100.0, false);
+    }
+    void progression(double f, bool toujours)
+    {
+        // outils 0-0,05 ; préparation 0,05-0,15 ; XenonRecomp (et imports) 0,15-0,3 ; configuration et compilation 0,3-1
+        static const double kDe[NbEtapes] = { 0, 0.05, 0.15, 0.3, 0.3, 0.3, 1 }, kA[NbEtapes] = { 0.05, 0.15, 0.3, 0.3, 0.3, 1, 1 };
+        static const char* const kNom[NbEtapes] = { "Outils", "Préparation du jeu", "Recompilation du code (XenonRecomp)",
+            "Imports", "Configuration", "Compilation", "Installation" };
+        const double v = kDe[e_] + std::clamp(f, 0.0, 1.0) * (kA[e_] - kDe[e_]);
+        if (!toujours && v < dernier_ + 0.001) return;   // au plus ~1000 lignes ; jamais en arrière dans une étape
+        dernier_ = v;
+        char b[32];
+        std::snprintf(b, sizeof b, "progress %.3f ", v);   // point décimal : locale « C » (setlocale jamais appelé ici)
+        ecrire(b + std::string(kNom[e_]));
+    }
+};
+SuiviRecompLauncher g_suiviRL;
+
 int realMain(const std::vector<fs::path>& args)
 {
     fs::path D;
@@ -1261,6 +1271,7 @@ int realMain(const std::vector<fs::path>& args)
     Install in;
     openWorkDir(in, D.empty() ? defaultWorkDir() : D);
     D = in.D;
+    if (g_recompLauncher) g_suiviRL.ouvrir(dataDir(D) / "journal-installation.log");
     bool prepared = isPrepared(in);
 
     if (inputs.empty() && prepared && fs::exists(exe(D / "wakfu"))) return launch ? launchGame(in) : 0;
@@ -1268,8 +1279,11 @@ int realMain(const std::vector<fs::path>& args)
     {
         usage();
 #ifdef _WIN32
+        if (!g_recompLauncher)   // RecompLauncher : jamais d'attente
+        {
         say("\nChemin(s) du jeu et de la mise à jour (glisser les fichiers dans cette fenêtre), puis Entrée :\n> ");
         inputs = splitPaths(readLine());
+        }
 #endif
         if (inputs.empty()) return 2;
     }
@@ -1307,6 +1321,7 @@ int realMain(const std::vector<fs::path>& args)
 
 int principal(const std::vector<fs::path>& args)
 {
+    if (g_recompLauncher) g_suivi = &g_suiviRL;
     int rc;
     try { rc = realMain(args); }
     catch (const std::exception& e)
@@ -1327,6 +1342,14 @@ int wmain(int argc, wchar_t** argv)
     {
         wk::createJob();
         return wk::guiMain();
+    }
+    if (wk::g_recompLauncher)
+    {
+        // RecompLauncher : ni console ni attente ; sorties standard héritées (si valides), outils arrêtés avec nous,
+        // journal du jeu toujours écrit (journal.log, joint aux rapports de plantage)
+        wk::createJob();
+        SetEnvironmentVariableW(L"WAKFU_JOURNAL", L"1");
+        return wk::principal(std::vector<wk::fs::path>(argv + 1, argv + argc));
     }
     wk::openConsole();
     SetConsoleOutputCP(CP_UTF8);

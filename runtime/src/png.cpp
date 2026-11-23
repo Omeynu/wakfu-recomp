@@ -1,6 +1,8 @@
 // Écriture PNG RGBA 8 bits sans dépendance : deflate en blocs « stockés » (non compressés).
 #include "png.h"
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 
 namespace wk {
 
@@ -60,6 +62,23 @@ bool WritePng(const std::string& path, uint32_t w, uint32_t h, const std::vector
     Chunk(f, "IDAT", z);
     Chunk(f, "IEND", {});
     return fclose(f) == 0;
+}
+
+
+bool PngVersIco(const std::string& png, const std::string& ico) {
+    std::ifstream in(png, std::ios::binary);
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)), {});
+    static const uint8_t sig[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    if (d.size() < 24 || !std::equal(sig, sig + 8, d.begin()) || std::string(d.begin() + 12, d.begin() + 16) != "IHDR") return false;
+    auto be = [&](size_t o) { return uint32_t(d[o]) << 24 | uint32_t(d[o + 1]) << 16 | uint32_t(d[o + 2]) << 8 | d[o + 3]; };
+    const uint32_t w = be(16), h = be(20), n = uint32_t(d.size());
+    if (w < 1 || w > 256 || h < 1 || h > 256) return false;
+    const uint8_t t[22] = {0, 0, 1, 0, 1, 0,                                   // ICONDIR : type 1 (icône), 1 image
+                           uint8_t(w), uint8_t(h), 0, 0, 1, 0, 32, 0,          // 256 s'écrit 0
+                           uint8_t(n), uint8_t(n >> 8), uint8_t(n >> 16), uint8_t(n >> 24), 22, 0, 0, 0};
+    std::ofstream out(ico, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(t), 22).write(reinterpret_cast<const char*>(d.data()), n);
+    return bool(out.flush());
 }
 
 }  // namespace wk

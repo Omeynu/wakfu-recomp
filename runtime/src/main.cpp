@@ -36,14 +36,15 @@ namespace wk {
 
 namespace {
 
-// Journal des 3 derniers lancements : journal.txt (en cours), journal.1.txt, journal.2.txt.
+// Journal des 3 derniers lancements : journal.log (en cours), journal.1.log, journal.2.log (un ancien journal.txt
+// est laissé tel quel ; RecompLauncher joint le .log le plus récent aux rapports de plantage).
 void RotateJournals(const std::string& dir) {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path d = fs::u8path(dir);
-    fs::remove(d / "journal.2.txt", ec);
-    fs::rename(d / "journal.1.txt", d / "journal.2.txt", ec);
-    fs::rename(d / "journal.txt", d / "journal.1.txt", ec);
+    fs::remove(d / "journal.2.log", ec);
+    fs::rename(d / "journal.1.log", d / "journal.2.log", ec);
+    fs::rename(d / "journal.log", d / "journal.1.log", ec);
 }
 
 std::vector<uint8_t> ReadFile(const char* p) {
@@ -73,10 +74,10 @@ int main(int argc, char** argv) {
     if (argc > 4) wk::g_overlayDir = argv[4];
     if (argc > 5) wk::g_dataDir = argv[5];
     wk::config::Load(wk::g_dataDir);
-    // option [confort] console (Windows) ; sous Linux, le lanceur (WAKFU_JOURNAL) veut toujours journal.txt
+    // option [confort] console (Windows) ; sous Linux, le lanceur (WAKFU_JOURNAL) veut toujours journal.log
     if (!wk::config::g.console || getenv("WAKFU_JOURNAL")) {
         RotateJournals(wk::g_dataDir);
-        wk::platform::DetachConsole(wk::g_dataDir + "/journal.txt");
+        wk::platform::DetachConsole(wk::g_dataDir + "/journal.log");
     }
 
     wk::platform::InstallCrashHandler(OnCrash);

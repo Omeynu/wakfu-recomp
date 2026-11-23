@@ -1,5 +1,6 @@
 // Seule fonction de suppression récursive du lanceur (ménage, désinstallation, anciennes installations) : bornée à
-// un dossier racine vérifié, ne suit jamais de lien symbolique (ni de jonction sous Windows).
+// un dossier racine vérifié, ne suit jamais de lien symbolique (ni de jonction sous Windows). Copie des sauvegardes
+// de l'ancien mode portable (sans rien remplacer ni supprimer).
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -146,6 +147,33 @@ uint64_t tailleSansLiens(const fs::path& p)
     if (!fs::is_directory(s)) return 0;
     for (auto it = fs::directory_iterator(p, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) t += tailleSansLiens(it->path());
     return t;
+}
+
+int64_t migrerPortable(const fs::path& ancien, const fs::path& data)
+{
+    const fs::path src = ancien / "userdata", fait = data / ".portable-copie";
+    std::error_code ec;
+    if (!fs::exists(ancien / ".wakfurecomp", ec) || estLien(src) || !fs::is_directory(src, ec) || fs::is_empty(src, ec)
+        || fs::exists(fait, ec))
+        return -1;
+    const fs::path r = cle(fs::weakly_canonical(data)).lexically_relative(cle(fs::weakly_canonical(src)));
+    if (!r.empty() && *r.begin() != "..") return -1;   // données dans l'ancien dossier (même dossier) : rien à copier
+    int64_t n = 0;
+    fs::create_directories(data);
+    for (auto it = fs::recursive_directory_iterator(src); it != fs::recursive_directory_iterator(); ++it)
+    {
+        const fs::path d = data / it->path().lexically_relative(src);
+        if (estLien(it->path())) it.disable_recursion_pending();   // lien ou jonction : ni suivi ni copié
+        else if (it->is_directory()) fs::create_directories(d);
+        else if (it->is_regular_file() && !fs::exists(fs::symlink_status(d)))
+        {
+            fs::copy_file(it->path(), d, fs::copy_options::none);   // none : erreur plutôt qu'écraser
+            ++n;
+        }
+    }
+    std::ofstream o(fait);   // témoin écrit seulement après une copie complète (sinon refaite au lancement suivant)
+    if (!o.flush()) throw Error("écriture impossible : " + u8(fait));
+    return n;
 }
 
 } // namespace wk

@@ -509,13 +509,18 @@ void FaireResoudre(const Commande& c) {
     if (!src) { NonFait(kSansSource, c, src, nullptr); return; }
     // Tuilage (zone 1 : surface 4x de 320x720, 4 bandes résolues aux rectangles écran 0-320 ... 960-1280) : le natif
     // dessine une seule fois en coordonnées écran, la surface est agrandie au rectangle demandé (effet à l'image suivante).
+    // Les autres surfaces attachées à la taille de la bande le sont aussi : la passe est limitée à la plus petite
+    // (Grougal : cible 1024x1024 en 2 bandes de 1024x512, profondeur jamais résolue, moitié basse jamais dessinée).
     if (c.avecRect && (c.rect[2] > int32_t(src->img.width) || c.rect[3] > int32_t(src->img.height))) {
-        ImageNative grande;
-        if (CreerImage(std::max<uint32_t>(c.rect[2], src->img.width), std::max<uint32_t>(c.rect[3], src->img.height),
-                       src->formatInvite, src->ech, true, &grande)) {
-            Remplacer(n.surfaces, cleSrc, grande);
-            src = &n.surfaces[cleSrc];
+        const uint32_t w0 = src->img.width, h0 = src->img.height;
+        const uint32_t w = std::max<uint32_t>(c.rect[2], w0), h = std::max<uint32_t>(c.rect[3], h0);
+        for (uint32_t cle : {n.rt[0], n.rt[1], n.rt[2], n.rt[3], n.ds}) {
+            const ImageNative* s = Trouver(n.surfaces, cle);
+            ImageNative grande;
+            if (s && s->img.width == w0 && s->img.height == h0 && CreerImage(w, h, s->formatInvite, s->ech, true, &grande))
+                Remplacer(n.surfaces, cle, grande);
         }
+        src = Trouver(n.surfaces, cleSrc);
     }
     if (c.d) { NonFait(kMip, c, src, nullptr); return; }   // niveau de mip > 0 : à faire
     ImageNative* dst = Trouver(n.textures, c.b);

@@ -30,7 +30,7 @@ struct Config {
     bool backgroundInput = false;            // manette lue même sans le focus de la fenêtre
     // [confort]
     bool skipLogos = false;                  // logos d'introduction sautés
-    bool console = true;                     // Windows : console du journal (sinon journal dans <données>/journal.txt)
+    bool console = false;                    // Windows : console du journal (sinon journal dans <données>/journal.log)
     // [jeu]
     std::string langue = "auto";             // auto (langue du système) | fr | en | de | es | it | ja
     // [touches] commande de la manette -> nom de touche SDL (« Return », « Z »…), remplace les touches par défaut

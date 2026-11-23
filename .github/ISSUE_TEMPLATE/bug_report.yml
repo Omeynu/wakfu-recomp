@@ -4,7 +4,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: "Do not attach or link game files. Logs: `%APPDATA%\\WakfuRecomp\\journal.txt`."
+      value: "Do not attach or link game files. Logs: `%APPDATA%\\WakfuRecomp\\journal.log`."
   - type: input
     id: version
     attributes:
@@ -36,6 +36,6 @@ body:
   - type: textarea
     id: log
     attributes:
-      label: journal.txt
+      label: journal.log
       description: Attach the file, or paste its last lines
       render: text

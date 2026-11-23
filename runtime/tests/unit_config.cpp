@@ -57,12 +57,13 @@ int main() {
                            r.msaa == c.msaa && err.empty());
     Expect("aller-retour langue", Parse(Serialize(Parse("[jeu]\nlangue = \"es\"\n", &err)), &err).langue == "es" && err.empty());
     err.clear();
-    Config k = Parse("[touches]\na = \"Space\"\nstick_gauche_haut = \"W\"\nvoler = \"F\"\nb = 3\n[confort]\nconsole = false\n", &err);
-    Expect("touches lues", k.keys.size() == 2 && k.keys["a"] == "Space" && k.keys["stick_gauche_haut"] == "W" && !k.console);
+    Config k = Parse("[touches]\na = \"Space\"\nstick_gauche_haut = \"W\"\nvoler = \"F\"\nb = 3\n[confort]\nconsole = true\n", &err);
+    Expect("touches lues", k.keys.size() == 2 && k.keys["a"] == "Space" && k.keys["stick_gauche_haut"] == "W" && k.console);
+    Expect("console désactivée par défaut", !Config{}.console);
     Expect("touches invalides : 2 messages", err.size() == 2);
     err.clear();
     Config kr = Parse(Serialize(k), &err);
-    Expect("touches aller-retour", kr.keys == k.keys && !kr.console && err.empty());
+    Expect("touches aller-retour", kr.keys == k.keys && kr.console && err.empty());
     // Aller-retour complet, comme le lanceur (tools-src/wakfu-installer/lanceur.cpp : Serialize puis relecture par le
     // runtime) : toutes les clés changées, touche « \ » (Backslash) et guillemet dans le nom du GPU échappés.
     err.clear();
@@ -70,7 +71,7 @@ int main() {
     t.width = 2560, t.height = 1440, t.mode = "plein_ecran", t.vsync = true, t.fpsLimit = 144, t.showFps = true;
     t.gpu = "RX \"6700\" \\ XT", t.antiAliasing = "fxaa", t.sharpness = 0.37f, t.brightness = 1.25f;
     t.gamma = 2.2f, t.xboxColor = true, t.volume = 0.42f, t.vibration = false, t.backgroundInput = true;
-    t.skipLogos = true, t.console = false;
+    t.skipLogos = true, t.console = true;
     t.keys = {{"a", "Space"}, {"b", "\\"}, {"stick_droit_bas", "Left Shift"}};
     Config u = Parse(Serialize(t), &err);
     Expect("aller-retour complet", err.empty() && u.width == t.width && u.height == t.height && u.mode == t.mode && u.vsync == t.vsync &&
