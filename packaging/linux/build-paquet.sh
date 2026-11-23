@@ -10,6 +10,8 @@ set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 OUT=$(realpath -m "${1:?usage : build-paquet.sh <dossier de sortie>}")
 ST=$OUT/stage DL=$OUT/dl BLD=$OUT/bld
+# Chemins de la machine de construction retirés des binaires (__FILE__, débogage)
+export CFLAGS="-ffile-prefix-map=$OUT=build -ffile-prefix-map=$REPO=src" CXXFLAGS="-ffile-prefix-map=$OUT=build -ffile-prefix-map=$REPO=src"
 rm -rf "$ST"; mkdir -p "$ST/src" "$DL" "$BLD"
 fetch() {   # <fichier> : téléchargé une fois, somme SHA-256 de deps.lock vérifiée à chaque fois
     local name=$1 sha url

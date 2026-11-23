@@ -1,21 +1,43 @@
 #!/bin/sh
-# Release zip for GitHub and RecompLauncher : WakfuRecomp.exe + recomplauncher.json at the top, plus licenses.
-# Usage : packaging/recomplauncher/package.sh <WakfuRecomp.exe> <version, e.g. 0.1.0> <output dir>
+# Release files for one platform: the program alone (for players) and an archive for RecompLauncher
+# (program + recomplauncher.json at the top + licenses).
+# Usage : packaging/recomplauncher/package.sh <windows|linux> <program> <version, e.g. 0.1.0> <output dir>
+#   windows: <program> = WakfuRecomp.exe -> WakfuRecomp-<v>-windows-x64.exe + wakfu-recomp-<v>-windows-x64.zip
+#   linux:   <program> = WakfuRecomp     -> WakfuRecomp-<v>-linux-x86_64  + wakfu-recomp-<v>-linux-x86_64.tar.gz
 set -eu
-EXE=${1:?usage : package.sh <WakfuRecomp.exe> <version> <output dir>}; VER=${2:?version}; OUT=${3:?output dir}
+OS=${1:?usage : package.sh <windows|linux> <program> <version> <output dir>}; PROG=${2:?program}; VER=${3:?version}; OUT=${4:?output dir}
 case $VER in *[!0-9A-Za-z.-]*|'') echo "invalid version: $VER" >&2; exit 2 ;; esac
+[ -f "$PROG" ] || { echo "program not found: $PROG" >&2; exit 2; }
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p "$OUT"
-ZIP=$OUT/wakfu-recomp-$VER-windows-x64.zip
-rm -f "$ZIP"
-python3 -I - "$ZIP" "$EXE" "$REPO" <<'PY'
-import sys, zipfile, json
-zip_path, exe, repo = sys.argv[1:]
-json.load(open(f"{repo}/packaging/recomplauncher/recomplauncher.json"))   # refuse a broken manifest
-with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-    z.write(exe, "WakfuRecomp.exe")
-    z.write(f"{repo}/packaging/recomplauncher/recomplauncher.json", "recomplauncher.json")
-    z.write(f"{repo}/COPYING", "COPYING.txt")
-    z.write(f"{repo}/packaging/windows/LICENCES-TIERS.txt", "LICENCES-TIERS.txt")
+python3 -I - "$OS" "$PROG" "$VER" "$OUT" "$REPO" <<'PY'
+import io, json, os, shutil, sys, tarfile, zipfile
+os_, prog, ver, out, repo = sys.argv[1:]
+manifest = f"{repo}/packaging/recomplauncher/recomplauncher.json"
+json.load(open(manifest))   # refuse a broken manifest
+if os_ == "windows":
+    single = f"{out}/WakfuRecomp-{ver}-windows-x64.exe"
+    shutil.copyfile(prog, single)
+    with zipfile.ZipFile(f"{out}/wakfu-recomp-{ver}-windows-x64.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(prog, "WakfuRecomp.exe")
+        z.write(manifest, "recomplauncher.json")
+        z.write(f"{repo}/COPYING", "COPYING.txt")
+        z.write(f"{repo}/packaging/windows/LICENCES-TIERS.txt", "LICENCES-TIERS.txt")
+elif os_ == "linux":
+    single = f"{out}/WakfuRecomp-{ver}-linux-x86_64"
+    shutil.copyfile(prog, single)
+    os.chmod(single, 0o755)
+    def add(t, path, name, mode):
+        info = t.gettarinfo(path, name)
+        info.mode, info.uid, info.gid, info.uname, info.gname = mode, 0, 0, "", ""
+        with open(path, "rb") as f:
+            t.addfile(info, f)
+    with tarfile.open(f"{out}/wakfu-recomp-{ver}-linux-x86_64.tar.gz", "w:gz") as t:
+        add(t, prog, "WakfuRecomp", 0o755)
+        add(t, manifest, "recomplauncher.json", 0o644)
+        add(t, f"{repo}/COPYING", "COPYING", 0o644)
+        add(t, f"{repo}/packaging/linux/LISEZMOI.txt", "LISEZMOI.txt", 0o644)
+else:
+    sys.exit(f"unknown platform: {os_} (windows or linux)")
 PY
-echo "$ZIP"
+ls "$OUT"

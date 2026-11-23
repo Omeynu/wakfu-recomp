@@ -38,7 +38,7 @@ Each step is covered by the tests and checks described in [`docs/`](docs/) (Fren
 
 | | |
 |---|---|
-| OS | Windows 10/11 x64, or Linux x64 (Arch-based package, or build from source) |
+| OS | Windows 10/11 x64, or Linux x86_64 (missing packages installed automatically on Arch-based distributions) |
 | GPU | Vulkan 1.3 (tested on AMD Radeon RX 6700 XT, RX 7900 XT, Vega 8 integrated) |
 | Memory | at least 4 GB of free virtual memory (RAM + page file): the emulated console memory is committed at start |
 | Disk | ~3 GB free (build tools, prepared game, build) |
@@ -54,14 +54,19 @@ the CPU); later starts are immediate.
 
 ### Manually
 
-1. Download `wakfu-recomp-<version>-windows-x64.zip` from the [releases](https://github.com/Omeynu/wakfu-recomp/releases),
-   extract it and run `WakfuRecomp.exe`.
-2. Drop your game package and title update 2 package on the window (or use *Browse*). Each file is checked by
+Pick the file for your system on the [releases page](https://github.com/Omeynu/wakfu-recomp/releases/latest):
+
+| System | File | How to start it |
+|---|---|---|
+| Windows 10/11 x64 | `WakfuRecomp-<version>-windows-x64.exe` | double-click |
+| Linux x86_64 | `WakfuRecomp-<version>-linux-x86_64` | `chmod +x` it, then run it |
+
+1. Drop your game package and title update 2 package on the window (or use *Browse*). Each file is checked by
    content; an unknown version is refused with the reason.
-3. Click *Recompile*, wait, then *Play*.
+2. Click *Recompile*, wait, then *Play*.
 
 Windows SmartScreen or an antivirus may warn because the executable is not signed.
-Settings, saves and logs are in `%APPDATA%\WakfuRecomp` and survive updates.
+Settings, saves and logs are in `%APPDATA%\WakfuRecomp` (Windows) or `~/.local/share/wakfu-recomp` (Linux) and survive updates.
 
 ## Features
 
