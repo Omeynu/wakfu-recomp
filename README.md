@@ -1,6 +1,7 @@
 # wakfu-recomp
 
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-support%20the%20project-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/omeynu)
+[![Verified developer on RecompStore](https://recompstore.com/assets/press/verified-dark.svg)](https://recompstore.com/dev/omeynu)
 
 A static recompilation of **Islands of Wakfu** (Xbox Live Arcade, Xbox 360, title `584109AA`) to native PC code.
 The game's PowerPC code is translated to C++ with a patched [XenonRecomp](https://github.com/hedge-dev/XenonRecomp);
