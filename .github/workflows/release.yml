@@ -43,7 +43,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Host tools
-        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build curl python3 zstd git libsdl2-dev zlib1g-dev libvulkan-dev
+        # the launcher embeds its font with --embed-dir (Clang 19+); Ubuntu 24.04 defaults to Clang 18
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang-19 cmake ninja-build curl python3 zstd git libsdl2-dev zlib1g-dev libvulkan-dev
+          sudo ln -sf /usr/bin/clang-19 /usr/local/bin/clang && sudo ln -sf /usr/bin/clang++-19 /usr/local/bin/clang++
+          clang --version | head -1
       - name: Build the Linux launcher
         run: packaging/linux/build-paquet.sh "$PWD/build"
       - name: Build logs

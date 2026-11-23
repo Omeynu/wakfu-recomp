@@ -25,7 +25,7 @@ The Linux launcher is the same program as `WakfuRecomp.exe`. It is built by:
 packaging/linux/build-paquet.sh <output dir>    # -> WakfuRecomp-linux.tar.zst
 ```
 
-Host requirements: git, tar, zstd, curl, python3, clang, cmake, ninja, SDL2 and zlib headers, network access
+Host requirements: git, tar, zstd, curl, python3, clang ≥ 19 (`--embed-dir`), cmake, ninja, SDL2, zlib and Vulkan headers, network access
 (XenonRecomp, XenosRecomp and DXC at the versions in `tools.lock`; zstd, Dear ImGui and Inter at the versions in
 `packaging/windows/deps.lock`). Extract the archive and run `WakfuRecomp/WakfuRecomp`: the window guides you
 through choosing the game files, recompiling and playing. On Arch-based distributions it can install the missing
