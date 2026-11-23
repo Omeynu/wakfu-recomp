@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <chrono>
+
 namespace wk::platform {
 
 // Initialisation : sorties en mode binaire (journaux identiques sous Linux et Windows).
@@ -45,5 +47,9 @@ double ThreadCpuMs();
 // Diagnostic : demande la pile de chaque thread enregistré (Linux seulement ; sans effet sous Windows).
 void RegisterCurrentThreadForDump(unsigned id);
 void DumpAllThreadsAfter(int seconds);
+
+// Attend jusqu'à l'échéance t. Sous Windows : minuteur haute résolution (≈ 0,5 ms) au lieu de la résolution par
+// défaut du système (15,6 ms), trop grossière pour la synchro verticale à 16,7 ms.
+void SleepUntil(std::chrono::steady_clock::time_point t);
 
 }  // namespace wk::platform

@@ -25,6 +25,9 @@ jobs:
           key: dl-win-${{ hashFiles('packaging/windows/deps.lock', 'tools.lock') }}
       - name: Build WakfuRecomp.exe
         run: packaging/windows/build-installer.sh "$PWD/build"
+      - name: Build logs
+        if: failure()
+        run: for f in build/logs/*; do echo "== $f"; tail -40 "$f"; done
       - name: Package
         run: |
           VER=${GITHUB_REF_NAME#v}; [ "$GITHUB_REF_TYPE" = tag ] || VER=0.0.0-dev
@@ -40,9 +43,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Host tools
-        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build curl python3 zstd git libsdl2-dev zlib1g-dev
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build curl python3 zstd git libsdl2-dev zlib1g-dev libvulkan-dev
       - name: Build the Linux launcher
         run: packaging/linux/build-paquet.sh "$PWD/build"
+      - name: Build logs
+        if: failure()
+        run: for f in build/bld/*.log; do echo "== $f"; tail -40 "$f"; done
       - name: Package
         run: |
           VER=${GITHUB_REF_NAME#v}; [ "$GITHUB_REF_TYPE" = tag ] || VER=0.0.0-dev

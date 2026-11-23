@@ -3,6 +3,7 @@
 #include <cstring>
 #include <filesystem>
 #include <mutex>
+#include <algorithm>
 #include <thread>
 #include <vector>
 
@@ -296,4 +297,33 @@ double ThreadCpuMs() {
 
 #endif
 
+}  // namespace wk::platform
+
+namespace wk::platform {
+void SleepUntil(std::chrono::steady_clock::time_point t)
+{
+#ifdef _WIN32
+    // Un minuteur par fil : CREATE_WAITABLE_TIMER_HIGH_RESOLUTION (Windows 10 1803+) ; sinon timeBeginPeriod(1)
+    // (winmm chargé à l'exécution, sans dépendance de lien) et repli sur sleep_until.
+    static thread_local HANDLE timer = [] {
+        HANDLE h = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */,
+                                          TIMER_ALL_ACCESS);
+        if (!h)
+            if (HMODULE m = LoadLibraryW(L"winmm.dll"))
+                if (auto f = reinterpret_cast<UINT(WINAPI*)(UINT)>(reinterpret_cast<void*>(GetProcAddress(m, "timeBeginPeriod"))))
+                    f(1);
+        return h;
+    }();
+    auto reste = t - std::chrono::steady_clock::now();
+    if (reste <= reste.zero()) return;
+    if (timer)
+    {
+        LARGE_INTEGER due;   // négatif = relatif, en unités de 100 ns
+        due.QuadPart = -std::max<long long>(1, std::chrono::duration_cast<std::chrono::nanoseconds>(reste).count() / 100);
+        if (SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0) && WaitForSingleObject(timer, INFINITE) == WAIT_OBJECT_0)
+            return;
+    }
+#endif
+    std::this_thread::sleep_until(t);
+}
 }  // namespace wk::platform

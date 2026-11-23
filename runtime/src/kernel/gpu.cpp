@@ -85,11 +85,23 @@ void StartSystemThreads() {
     std::thread([vb] {
         PPCContext ctx{};
         AttachThread(vb, ctx);
-        auto next = std::chrono::steady_clock::now();
+        using Clock = std::chrono::steady_clock;
+        auto next = Clock::now();
+        auto bilan = next + std::chrono::seconds(10);
+        double retardSomme = 0, retardMax = 0;   // retard des réveils sur l'échéance, en ms
+        unsigned reveils = 0, enRetard = 0;
         uint32_t vblank = 0;
         for (;;) {
             next += std::chrono::microseconds(16667);
-            std::this_thread::sleep_until(next);
+            platform::SleepUntil(next);
+            double retard = std::chrono::duration<double, std::milli>(Clock::now() - next).count();
+            retardSomme += retard; retardMax = std::max(retardMax, retard); ++reveils; enRetard += retard > 2.0;
+            if (next >= bilan) {   // > 2 ms de retard : le jeu risque de rater la synchro (image de 33,3 ms)
+                fprintf(stderr, "[vblank] 10 s : %u réveils, retard moyen %.2f ms, max %.2f ms, %u à plus de 2 ms\n",
+                        reveils, retardSomme / reveils, retardMax, enRetard);
+                bilan += std::chrono::seconds(10);
+                retardSomme = retardMax = 0; reveils = enRetard = 0;
+            }
             St32(kMmio + 0x6110, ++vblank);       // compteur de vblank lu par D3D
             St32(kMmio + 0x6544, 1);              // statut : bit 0 = vblank en cours (testé par le rappel)
             if (uint32_t cb = g_irqCallback) { ctx.r3.u64 = 0; ctx.r4.u64 = g_irqUser; CallGuest(cb, ctx); }
