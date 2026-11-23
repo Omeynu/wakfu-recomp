@@ -7,6 +7,9 @@ The game's PowerPC code is translated to C++ with a patched [XenonRecomp](https:
 its Direct3D calls are intercepted and rendered with Vulkan; the Xbox 360 kernel, audio (XMA) and input are
 reimplemented in a runtime (SDL2).
 
+**Why this project:** I have been a fan of the Wakfu series since I was young, and I wanted to play Islands of
+Wakfu natively on my PC instead of going through an emulator.
+
 **[Download the latest release](https://github.com/Omeynu/wakfu-recomp/releases/latest)** ·
 **[Support the project on Patreon](https://www.patreon.com/Omeynu)**
 
