@@ -5,6 +5,7 @@
 #include <deque>
 #include <mutex>
 #include <thread>
+#include "../platform.h"
 #include "../process.h"
 #include "stub.h"
 #include "sync.h"
@@ -131,7 +132,7 @@ WK_IMPORT(KeDelayExecutionThread) {
     WK_TRACE(KeDelayExecutionThread);
     // (mode, alertable, LARGE_INTEGER* intervalle) ; négatif = relatif en 100 ns
     const int64_t t = ctx.r5.u32 ? int64_t(Ld64(ctx.r5.u32)) : 0;
-    if (t < 0) std::this_thread::sleep_for(std::chrono::nanoseconds(-t * 100));
+    if (t < 0) wk::platform::SleepUntil(std::chrono::steady_clock::now() + std::chrono::nanoseconds(-t * 100));   // Windows : haute résolution
     else std::this_thread::yield();
     Ret(ctx, STATUS_SUCCESS);
 }

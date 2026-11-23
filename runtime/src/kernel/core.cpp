@@ -188,9 +188,18 @@ WK_IMPORT(KeTlsSetValue) {
 // Base de temps du Xenon (mftb, QueryPerformanceCounter du XDK) : 50 MHz depuis le démarrage, jamais nulle (le XDK
 // relit mftb si la partie basse vaut 0). XenonRecomp émettait __rdtsc() brut (≈ 2,9 GHz) : temps de jeu ≈ 58x trop
 // rapide, script de la zone 1 bloqué sur WaitTime.
+// Journal : temps passé par un fil à relire l'horloge en boucle (lectures à moins de 20 µs d'écart = attente active).
+thread_local uint64_t t_bouclesNs = 0, t_lectures = 0;
+uint64_t WkBouclesNs() { return t_bouclesNs; }
+uint64_t WkLecturesHorloge() { return t_lectures; }
 uint64_t WkQueryTimeBase() {
     static const auto start = std::chrono::steady_clock::now();
-    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()) / 20 + 1;
+    thread_local uint64_t prec = 0;
+    const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+    if (ns - prec < 20000) t_bouclesNs += ns - prec;
+    prec = ns;
+    t_lectures++;
+    return ns / 20 + 1;
 }
 WK_IMPORT(KeQueryPerformanceFrequency) { WK_TRACE(KeQueryPerformanceFrequency); Ret(ctx, 50000000); }
 WK_IMPORT(KeQuerySystemTime) {

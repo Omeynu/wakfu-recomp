@@ -40,6 +40,11 @@ namespace { CrashCallback g_onCrash = nullptr; }
 void Init() {
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
+    // Précision des minuteurs à 1 ms pour tout le processus (Windows 11 : réglage par processus, 15,6 ms sinon) :
+    // Sleep, attentes à délai, KeDelayExecutionThread du jeu, horodatage KeTimeStampBundle. winmm chargé à l'exécution.
+    if (HMODULE m = LoadLibraryW(L"winmm.dll"))
+        if (auto f = reinterpret_cast<UINT(WINAPI*)(UINT)>(reinterpret_cast<void*>(GetProcAddress(m, "timeBeginPeriod"))))
+            f(1);
 }
 
 // Mémoire invitée : 4 Go ; la mémoire physique (512 Mo) est vue en 0xA0000000 et en miroir en 0xC0000000

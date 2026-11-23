@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <thread>
+#include "../platform.h"
 #include "../trace.h"
 #include "../process.h"
 #ifdef WAKFU_HAS_SHADERGEN
@@ -13,6 +14,8 @@
 #endif
 
 namespace wk {
+double g_cpAttenteMemMs = 0;   // journal [cp] (kernel/gpu.cpp), fil CP seul
+uint32_t g_cpAttentesMem = 0;
 
 namespace {
 constexpr uint32_t kMmio = 0x7FC80000;
@@ -127,13 +130,18 @@ void ExecuteType3(Reader& r, uint32_t op, uint32_t count, int depth) {
             bool ok = Compare(info, PollValue(info, addr) & mask, ref);
             const bool traced = !ok;
             if (!ok) trace::Mark('W', addr);
+            const auto tAttente = std::chrono::steady_clock::now();
             // attend le CPU ou une interruption (10 s max) : d'abord en cédant la main (réveil rapide), puis par pas de 100 µs
             for (int i = 0; !ok && i < 100000; i++) {
                 if (i < 200) std::this_thread::yield();
-                else std::this_thread::sleep_for(std::chrono::microseconds(100));
+                else platform::SleepUntil(std::chrono::steady_clock::now() + std::chrono::microseconds(100));   // Windows : haute résolution
                 ok = Compare(info, PollValue(info, addr) & mask, ref);
             }
-            if (traced) trace::Mark('w');
+            if (traced) {
+                trace::Mark('w');
+                g_cpAttenteMemMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tAttente).count();
+                g_cpAttentesMem++;
+            }
             if (!ok) fprintf(stderr, "[gpu] attente %s non satisfaite : info %08X adresse %08X réf %08X masque %08X valeur %08X\n",
                              op == 0x3C ? "WAIT_REG_MEM" : "COND_WRITE", info, addr, ref, mask, PollValue(info, addr));
             if (op == 0x45) {

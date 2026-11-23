@@ -36,6 +36,11 @@ static void OnGpuSwap(uint32_t n);
 
 namespace wk {
 void StartDpcThread();
+// Journal du fil « processeur de commandes » (CP seul) : sous Windows une pause courte peut durer 1 à 15,6 ms.
+double g_cpPausesMs = 0, g_cpAnneauMs = 0;
+uint32_t g_cpPauses = 0;
+extern double g_cpAttenteMemMs;   // kernel/gpu_cp.cpp
+extern uint32_t g_cpAttentesMem;
 
 void StartSystemThreads() {
     StartDpcThread();
@@ -70,13 +75,22 @@ void StartSystemThreads() {
             if (g_ringBase) {
                 const uint32_t size = 1u << (g_ringSizeLog2 + 1);   // en mots (2^(log2+3) octets)
                 const uint32_t wptr = Ld32(kRegWptr) % size;
-                if (wptr != rptr) { trace::Mark('K', wptr); rptr = CpProcessRing(PhysToGuest(g_ringBase), size, rptr, wptr); trace::Mark('Q', rptr); }
+                if (wptr != rptr) {
+                    trace::Mark('K', wptr);
+                    const auto t0 = std::chrono::steady_clock::now();
+                    rptr = CpProcessRing(PhysToGuest(g_ringBase), size, rptr, wptr);
+                    g_cpAnneauMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                    trace::Mark('Q', rptr);
+                }
                 if (g_rptrWriteback) St32(PhysToGuest(g_rptrWriteback), rptr);
             }
             window::Pump();
             // Anneau vide : le jeu attend souvent une barrière que le CP doit lire au plus vite (BlockOnFence,
             // ≈ 1 image d'attente par image). 500 µs -> 20 µs : 17,6 -> 20,4-20,9 img/s (sauvegarde du joueur, zone 1).
-            std::this_thread::sleep_for(std::chrono::microseconds(20));
+            const auto t0 = std::chrono::steady_clock::now();
+            platform::SleepUntil(std::chrono::steady_clock::now() + std::chrono::microseconds(20));   // Windows : minuteur haute résolution
+            g_cpPausesMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            g_cpPauses++;
         }
     }).detach();
     while (!cpReady.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -194,6 +208,13 @@ static void OnGpuSwap(uint32_t n) {
         const double s = std::chrono::duration<double>(clock::now() - t0).count();
         if (s >= 5.0) {
             fprintf(stderr, "[cadence] %.1f img/s (images %u-%u)\n", (n - n0) / s, n0, n);
+            // anneau = traitement des commandes (attentes mémoire comprises) ; pause demandée : 20 µs
+            const double im = std::max(1u, n - n0);
+            fprintf(stderr, "[cp] par image : anneau %.2f ms dont attentes mémoire %.2f ms (%.1f), pauses %.2f ms (%.1f, %.0f µs chacune)\n",
+                    wk::g_cpAnneauMs / im, wk::g_cpAttenteMemMs / im, wk::g_cpAttentesMem / im, wk::g_cpPausesMs / im,
+                    wk::g_cpPauses / im, wk::g_cpPauses ? 1000 * wk::g_cpPausesMs / wk::g_cpPauses : 0.0);
+            wk::g_cpAnneauMs = wk::g_cpAttenteMemMs = wk::g_cpPausesMs = 0;
+            wk::g_cpPauses = wk::g_cpAttentesMem = 0;
             t0 = clock::now();
             n0 = n;
         }

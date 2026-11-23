@@ -5,6 +5,7 @@
 #include "natif/device.h"
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
@@ -31,6 +32,8 @@
 #include "png.h"
 #include "trace.h"
 
+uint64_t WkBouclesNs();          // kernel/core.cpp, fil courant
+uint64_t WkLecturesHorloge();
 namespace wk { uint32_t SwapsEmis(); }   // kernel/gpu.cpp : nombre de VdSwap émis par le jeu
 
 namespace wk::natif {
@@ -90,6 +93,16 @@ struct { bool actif = false; VkImage image = VK_NULL_HANDLE; uint32_t w = 0, h =
 bool PretAPresenter() { return g_aPresenter.actif && int32_t(g_swapCp - g_aPresenter.swap) >= 0; }   // sous g_mutex
 std::once_flag g_lance;
 void Boucle();
+// Journal du fil du jeu (retours des joueurs : chute de cadence quand les draws augmentent). Fil du jeu seul.
+using Horloge = std::chrono::steady_clock;
+
+double Ms(Horloge::time_point a, Horloge::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); }
+struct {
+    Horloge::time_point debut{};
+    double cpu0 = 0, dessinerMs = 0, attenteMs = 0, maxMs = 0;
+    uint64_t boucles0 = 0, lectures0 = 0;
+    uint32_t draws = 0, images = 0, lentes = 0;
+} g_jeu;
 
 void Envoyer(Commande&& c) {
     std::call_once(g_lance, [] { std::thread(Boucle).detach(); });
@@ -106,7 +119,9 @@ void Envoyer(Commande&& c) {
         g_file.push_back(std::move(c));
         g_cv.notify_one();
         // au plus 2 images d'avance (mémoire de la file bornée)
+        const auto t0 = Horloge::now();
         g_cvEchange.wait(l, [] { return g_echangesEnAttente <= 2; });
+        g_jeu.attenteMs += Ms(t0, Horloge::now());
         return;
     }
     g_file.push_back(std::move(c));
@@ -179,6 +194,7 @@ struct Natif {
     double gpuMs = 0;
     uint32_t lots = 0;
     double cpu0 = 0;   // ms (platform::ThreadCpuMs)
+    double attenteGpuMs = 0, presentMs = 0;   // durées réelles (fences GPU ; présentation : acquire, envoi, fence)
     // Profil GPU : horodatage après chaque passe/resolve/effacement (déjà séparés par des barrières complètes : coût
     // négligeable), cumulé par catégorie pour la ligne [natif N] ; WAKFU_PROFIL_GPU=1 : par cible, 2 : par draw
     VkQueryPool prof = VK_NULL_HANDLE;
@@ -218,7 +234,9 @@ void Barriere(VkCommandBuffer cmd) {
 
 VkCommandBuffer Cmd() {
     if (!n.enregistre) {
+        const auto t0 = Horloge::now();
         vkWaitForFences(n.vk->device, 1, &n.fences[n.slot], VK_TRUE, UINT64_MAX);
+        n.attenteGpuMs += Ms(t0, Horloge::now());
         const uint32_t q = 2 * uint32_t(n.slot);
         uint64_t ts[2];
         if (n.mesure[n.slot] && vkGetQueryPoolResults(n.vk->device, n.temps, q, 2, sizeof ts, ts, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS &&
@@ -275,7 +293,11 @@ void Soumettre(bool attendre) {
         std::lock_guard<std::mutex> l(n.vk->queueLock);
         vkQueueSubmit(n.vk->queue, 1, &si, n.fences[n.slot]);
     }
-    if (attendre) vkWaitForFences(n.vk->device, 1, &n.fences[n.slot], VK_TRUE, UINT64_MAX);
+    if (attendre) {
+        const auto t0 = Horloge::now();
+        vkWaitForFences(n.vk->device, 1, &n.fences[n.slot], VK_TRUE, UINT64_MAX);
+        n.attenteGpuMs += Ms(t0, Horloge::now());
+    }
 }
 
 void FermerPasse();
@@ -288,7 +310,9 @@ void Retirer(bool bloquer) {
         const uint64_t id = n.rappels.front().first;
         if (id > n.soumissions) { FermerPasse(); Soumettre(false); }
         const int s = n.idSlot[0] >= id && (n.idSlot[1] < id || n.idSlot[0] < n.idSlot[1]) ? 0 : 1;
+        const auto t0 = Horloge::now();
         if (vkWaitForFences(n.vk->device, 1, &n.fences[s], VK_TRUE, 200000) == VK_SUCCESS) n.fini = std::max(n.fini, n.idSlot[s]);
+        n.attenteGpuMs += Ms(t0, Horloge::now());
     }
     while (!n.rappels.empty() && n.rappels.front().first <= n.fini) {
         n.rappels.front().second();
@@ -749,7 +773,9 @@ void Presenter(bool attendre) {
     }
     g_aPresenter.actif = false;
     trace::Mark('N', g_aPresenter.swap);
+    const auto t0 = Horloge::now();
     window::PresentNative(g_aPresenter.image, g_aPresenter.w, g_aPresenter.h);
+    n.presentMs += Ms(t0, Horloge::now());
 }
 
 void FaireEchange(const Commande& c) {
@@ -806,8 +832,10 @@ void FaireEchange(const Commande& c) {
             }
             n.profCumul.clear();
         }
-        if (n.image) fprintf(stderr, "[natif %u] par image (60 dernières) : GPU %.2f ms (%.1f lots%s), CPU du fil natif %.2f ms\n",
-                             n.image, n.gpuMs / 60, n.lots / 60.0, parts.c_str(), cpu / 60);
+        if (n.image) fprintf(stderr, "[natif %u] par image (60 dernières) : GPU %.2f ms (%.1f lots%s), CPU du fil natif %.2f ms, "
+                             "attente des fences %.2f ms, présentation %.2f ms\n",
+                             n.image, n.gpuMs / 60, n.lots / 60.0, parts.c_str(), cpu / 60, n.attenteGpuMs / 60, n.presentMs / 60);
+        n.attenteGpuMs = n.presentMs = 0;
         n.cpu0 = t;
         n.gpuMs = 0;
         if (n.prof && g_profDetail && n.image % 240 == 0 && n.image) {
@@ -1098,6 +1126,8 @@ void Relever(uint32_t dev, Instantane* d) {
 }
 
 void Dessiner(uint32_t dev, std::unique_ptr<Instantane> d, uint32_t sommetsUP, uint32_t indicesUP) {
+    const auto t0 = Horloge::now();
+    g_jeu.draws++;
     if (dev) Relever(dev, d.get());
     // UP : sommets [0, (min + nombre) × stride) puis indices ; tailles bornées (arguments invités)
     if (sommetsUP) {
@@ -1112,6 +1142,7 @@ void Dessiner(uint32_t dev, std::unique_ptr<Instantane> d, uint32_t sommetsUP, u
     Commande c{Op::Dessiner};
     c.draw = std::move(d);
     Envoyer(std::move(c));
+    g_jeu.dessinerMs += Ms(t0, Horloge::now());
 }
 
 void SwapCp(uint32_t n) {
@@ -1119,11 +1150,60 @@ void SwapCp(uint32_t n) {
     g_cv.notify_all();
 }
 
+// Une ligne par 60 images du jeu : durée réelle d'une image du fil du jeu, son CPU (calcul), le temps dans les draws
+// (relevé + envoi au fil natif) et l'attente du fil natif (2 images d'avance). Durée >> CPU + attente = le fil dort
+// ailleurs (attentes du jeu, minuteurs). Une fois : précision réelle d'une attente de 1 ms sur ce système.
+void JournalJeu() {
+    static Horloge::time_point prec{};
+    static std::thread::id fil{};
+    const auto t = Horloge::now();
+    if (std::this_thread::get_id() != fil) {   // autre fil (écran de chargement) : compteurs par fil, on repart de zéro
+        fil = std::this_thread::get_id();
+        prec = {};
+        g_jeu = {};
+    }
+    if (prec != Horloge::time_point{}) {
+        const double d = Ms(prec, t);
+        g_jeu.maxMs = std::max(g_jeu.maxMs, d);
+        g_jeu.lentes += d > 17.5;
+    } else {
+        g_jeu.debut = t;
+        g_jeu.cpu0 = platform::ThreadCpuMs();
+        g_jeu.boucles0 = WkBouclesNs();
+        g_jeu.lectures0 = WkLecturesHorloge();
+        static bool mesure = false;
+        if (!mesure) {
+            mesure = true;
+            const auto s0 = Horloge::now();
+            for (int i = 0; i < 5; i++) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            fprintf(stderr, "[minuteur] attente de 1 ms = %.2f ms en moyenne (5 essais)\n", Ms(s0, Horloge::now()) / 5);
+        }
+    }
+    prec = t;
+    if (++g_jeu.images < 60) return;
+    const double cpu = platform::ThreadCpuMs(), n = g_jeu.images, duree = Ms(g_jeu.debut, t) / n;
+    const uint64_t boucles = WkBouclesNs(), lectures = WkLecturesHorloge();
+    const double boucleMs = (boucles - g_jeu.boucles0) / 1e6 / n;
+    fprintf(stderr, "[fil jeu] par image (60 dernières) : durée %.2f ms (max %.2f, %u > 17,5 ms), CPU du fil %.2f ms "
+            "dont boucle sur l'horloge %.2f ms (%.0f lectures) -> travail %.2f ms, "
+            "draws %.0f (%.2f ms, %.1f µs/draw), attente du fil natif %.2f ms, reste (attentes du jeu) %.2f ms\n",
+            duree, g_jeu.maxMs, g_jeu.lentes, (cpu - g_jeu.cpu0) / n, boucleMs, (lectures - g_jeu.lectures0) / n,
+            (cpu - g_jeu.cpu0) / n - boucleMs, g_jeu.draws / n, g_jeu.dessinerMs / n,
+            g_jeu.draws ? 1000 * g_jeu.dessinerMs / g_jeu.draws : 0.0, g_jeu.attenteMs / n,
+            duree - (cpu - g_jeu.cpu0) / n - g_jeu.attenteMs / n);
+    g_jeu = {};
+    g_jeu.debut = t;
+    g_jeu.cpu0 = cpu;
+    g_jeu.boucles0 = boucles;
+    g_jeu.lectures0 = lectures;
+}
+
 void Echange(uint32_t frontTex) {
     Commande c{Op::Echange};
     c.a = frontTex ? BaseTexture(frontTex) : 0;
     c.b = SwapsEmis() + 1;   // appelé juste avant VdSwap (même fil) : numéro du swap de cette image
     Envoyer(std::move(c));
+    JournalJeu();
 }
 
 }  // namespace wk::natif
