@@ -27,7 +27,7 @@ lancée, ou sur les sorties redirigées ; l'exécutable étant une application �
 d'Entrée, outils et jeu sans fenêtre, lignes sur les sorties standard héritées avec la progression
 `progress <0..1> <étape>` (outils 0–0,05, préparation 0,05–0,15, XenonRecomp 0,15–0,3, configuration et compilation
 0,3–1 au rythme de ninja), copiées dans `<données>\journal-installation.log` (tronqué à chaque lancement) ; journal du
-jeu toujours écrit (`journal.log`) ; code de sortie 1 si l'installation échoue, sinon celui du jeu. Mode de test caché : `WAKFURECOMP_CAPTURE=<dossier>` enregistre une capture PNG de
+jeu toujours écrit (`journal.log`) ; code de sortie 1 si l'installation échoue, sinon celui du jeu. Étape `prepare` de RecompLauncher : `--sans-lancer <jeu> <mise à jour>` ; `%LOCALAPPDATA%\WakfuRecomp\pret` est retiré au début de la préparation ou de la compilation et écrit à la fin. Mode de test caché : `WAKFURECOMP_CAPTURE=<dossier>` enregistre une capture PNG de
 chaque écran (états simulés ; `WAKFURECOMP_CAPTURE_REEL=1` : vérification et recompilation réelles), avec
 `WAKFURECOMP_CAPTURE_JEU`, `_TU`, `_MAUVAIS` (fichier refusé), `_REFUS` (`<champ><chemin>|...`, champ 0 jeu ou
 1 mise à jour : une capture par fichier refusé) et `_IMAGES` (dossier `base` du jeu préparé).

@@ -3,6 +3,7 @@
 #include "config.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <vector>
@@ -78,6 +79,13 @@ int main(int argc, char** argv) {
     if (!wk::config::g.console || getenv("WAKFU_JOURNAL")) {
         RotateJournals(wk::g_dataDir);
         wk::platform::DetachConsole(wk::g_dataDir + "/journal.log");
+    }
+    // RecompLauncher : Big Picture -> sans bordure pour ce lancement seulement (config.toml inchangé : la fenêtre n'est
+    // mémorisée qu'en mode fenetre) ; manette notée au journal (icônes de manette : plus tard)
+    if (const char* m = getenv("RECOMPLAUNCHER_MODE")) {
+        const char* pad = getenv("RECOMPLAUNCHER_PAD");
+        fprintf(stderr, "[RecompLauncher] mode %s, manette %s\n", m, pad ? pad : "?");
+        if (!strcmp(m, "bigpicture") && wk::config::g.mode != "plein_ecran") wk::config::g.mode = "sans_bordure";
     }
 
     wk::platform::InstallCrashHandler(OnCrash);

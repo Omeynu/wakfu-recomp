@@ -63,6 +63,9 @@ std::atomic<pid_t> g_enfant{ 0 };   // groupe de processus de l'outil en cours (
 #endif
 // RECOMPLAUNCHER=1 : lancé par RecompLauncher (>= 0.9.3), sans console (SuiviRecompLauncher)
 const bool g_recompLauncher = [] { const char* v = std::getenv("RECOMPLAUNCHER"); return v && std::strcmp(v, "1") == 0; }();
+// Version du code généré (XenonRecomp, config/wakfu.toml, correctifs, gen_imports) : à augmenter à la main quand il
+// change (CONTRIBUTING.md). Même version : XenonRecomp n'est pas relancé, seule la compilation est refaite.
+constexpr const char* kCodeGenere = "code-1";
 using Arg = fs::path::string_type;   // argument de ligne de commande (wstring sous Windows)
 fs::path exe(fs::path p) { p += kExe; return p; }
 
@@ -575,6 +578,17 @@ fs::path dataDir(const fs::path& D)
         say("Données copiées vers %s (l'ancien dossier est conservé)\n", u8(target).c_str());
     }
     fs::create_directories(target);
+#ifndef _WIN32
+    // RecompLauncher écrit les réglages dans {config}/WakfuRecomp (~/.config) tant que wakfu n'est pas compilé :
+    // repris tels quels si le joueur n'a pas encore de config.toml ici (jamais écrasé)
+    if (fs::path h = envPath("HOME"); !h.empty() && !fs::exists(target / "config.toml"))
+        if (const fs::path rl = h / ".config" / "WakfuRecomp" / "config.toml"; fs::is_regular_file(rl, ec))
+        {
+            fs::copy_file(rl, target / "config.toml", ec);
+            say(ec ? "Réglages de RecompLauncher non repris (%s) : %s\n" : "Réglages de RecompLauncher repris de %s%s\n",
+                u8(rl).c_str(), ec ? ec.message().c_str() : "");
+        }
+#endif
     const fs::path ancien = selfPath().parent_path() / (kExe[0] ? "WakfuRecomp" : "wakfu-recomp");
     if (int64_t n = migrerPortable(ancien, target); n >= 0)
         say("Ancien mode portable : %lld fichier(s) copié(s) de %s vers %s (fichiers existants gardés, ancien dossier conservé)\n",
@@ -587,7 +601,7 @@ bool isInstalled(const Install& in) { return isPrepared(in) && fs::exists(in.D /
 bool isUpToDate(const Install& in)
 {
     std::string id;
-    std::ifstream(in.W / "out" / ".recomp-ok") >> id;
+    std::ifstream(in.D / "pret") >> id;
     return id == in.id;
 }
 double freeGb(const fs::path& D)
@@ -877,6 +891,7 @@ bool prepareGame(Install& in, const std::vector<fs::path>& inputs)
         for (auto& i : inputs)   // jamais d'entrée dans work/game, vidé ci-dessous
             if (isInside(i, in.D)) throw Error("l'entrée " + u8(i) + " est dans le dossier de travail " + u8(in.D) + " : la déplacer");
         say("[2/5] Préparation du jeu (extraction, mise à jour)\n");
+        fs::remove(in.D / "pret");
         supprimerDans(in.D, G);
         fs::remove(in.W / "out" / ".recomp-ok");
         std::vector<Arg> a = { w(exe(in.bin / "wakfu-prepare")), A("-o"), w(G) };
@@ -893,9 +908,13 @@ void buildGame(Install& in)
 {
     const fs::path &D = in.D, &W = in.W, &G = in.G, &T = in.T, &bin = in.bin, sdk = T / kSdk;
     // 3. C++ recompilé (XenonRecomp écrit dans work/out/ppc d'après config/wakfu.toml)
+    // Témoin « pret » (prepare.done de recomplauncher.json) : retiré pendant la compilation, réécrit à la fin
+    fs::remove(D / "pret");
     fs::path recompDone = W / "out" / ".recomp-ok";
     etape(EtXenon);
-    if (!isUpToDate(in) || !fs::exists(W / "out" / "ppc"))   // jamais fait, jeu re-préparé, autre version des outils, ménage
+    std::string code;
+    std::ifstream(recompDone) >> code;
+    if (code != kCodeGenere || !fs::exists(W / "out" / "ppc"))   // jamais fait, jeu re-préparé, autre code généré, ménage
     {
         say("[3/5] Recompilation du code PowerPC (XenonRecomp)\n");
         supprimerDans(D, D / "config");
@@ -905,7 +924,7 @@ void buildGame(Install& in)
         step("XenonRecomp", { w(exe(bin / "XenonRecomp")), w(D / "config" / "wakfu.toml"), w(sdk / "XenonUtils" / "ppc_context.h") }, D / "config");
         etape(EtImports);
         say("  %s\n", genImports(G / "patched" / "default.xex", G / "patched" / "patched.txt", sdk / "XenonUtils" / "xbox", W / "gen").c_str());
-        std::ofstream(recompDone) << in.id;
+        std::ofstream(recompDone) << kCodeGenere;
     }
     else say("[3/5] C++ déjà généré\n");
 
@@ -967,6 +986,7 @@ void buildGame(Install& in)
            "\"%~dp0wakfu.exe\" \"%~dp0work\\game\\patched\\image.bin\" \"%~dp0work\\game\\patched\\default.xex\" "
            "\"%~dp0work\\game\\base\" \"%~dp0work\\game\\tu2\" \"" << (dataDir(D) == D / "userdata" ? "%~dp0userdata" : "%APPDATA%\\WakfuRecomp") << "\"\r\n";
 #endif
+    std::ofstream(D / "pret") << in.id;
     say("[5/5] Prêt : %s\n  Pour jouer : relancer WakfuRecomp sans argument\n", u8(exe(D / "wakfu")).c_str());
 }
 
@@ -1279,8 +1299,18 @@ int realMain(const std::vector<fs::path>& args)
     D = in.D;
     if (g_recompLauncher) g_suiviRL.ouvrir(dataDir(D) / "journal-installation.log");
     bool prepared = isPrepared(in);
+    // RecompLauncher (keeps_copy) : copie du jeu effacée, {input:game} retiré des arguments ; seule reste la mise à
+    // jour. Le jeu préparé (work/game) suffit : compilation refaite sans repréparer. Seulement après une préparation
+    // réussie (entrees.txt, écrit à la fin de prepareGame) : une extraction interrompue est refaite.
+    std::error_code ecEntrees;
+    if (g_recompLauncher && prepared && inputs.size() == 1 && fs::file_size(in.W / "entrees.txt", ecEntrees) > 0 && !ecEntrees)
+    {
+        say("Copie du jeu absente : compilation depuis le jeu déjà préparé (%s).\n", u8(in.G).c_str());
+        inputs.clear();
+    }
 
-    if (inputs.empty() && prepared && fs::exists(exe(D / "wakfu"))) return launch ? launchGame(in) : 0;
+    // --sans-lancer (RecompLauncher prepare) : rien à faire si le jeu est compilé par cette version des outils
+    if (inputs.empty() && prepared && fs::exists(exe(D / "wakfu")) && (launch || isUpToDate(in))) return launch ? launchGame(in) : 0;
     if (inputs.empty() && !prepared)
     {
         usage();
@@ -1344,7 +1374,7 @@ int principal(const std::vector<fs::path>& args)
 #ifdef _WIN32
 int wmain(int argc, wchar_t** argv)
 {
-    if (argc <= 1)   // double-clic : fenêtre du lanceur
+    if (argc <= 1 && !wk::g_recompLauncher)   // double-clic : fenêtre du lanceur (RecompLauncher : jeu lancé directement)
     {
         wk::createJob();
         return wk::guiMain();
@@ -1370,7 +1400,7 @@ int wmain(int argc, wchar_t** argv)
 #else
 int main(int argc, char** argv)
 {
-    if (argc <= 1) return wk::guiMain();
+    if (argc <= 1 && !wk::g_recompLauncher) return wk::guiMain();   // RecompLauncher (start sans arguments) : jeu lancé directement
     return wk::principal(std::vector<wk::fs::path>(argv + 1, argv + argc));
 }
 #endif

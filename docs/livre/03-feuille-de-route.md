@@ -38,18 +38,25 @@ Dans l'ordre prévu. Une option nouvelle reste désactivée par défaut tant qu'
      y renvoie.
    - *Progression* : tranches fixes, outils 0 à 0,05, préparation 0,05 à 0,15, XenonRecomp 0,15 à 0,3, compilation
      0,3 à 1 (au rythme des lignes `[n/m]` de ninja).
-   - *Niveau 3* : étape `prepare` (`--sans-lancer {input:game} {input:update}`, `timeout` d'une heure au moins).
-     `version` : compteur augmenté à la main quand le code généré change (XenonRecomp, correctifs) ; règle notée
-     dans `CONTRIBUTING.md`. `done` : témoin `{local}/wakfu-recomp/pret`, écrit à la fin de la compilation et
-     supprimé quand elle recommence (Windows ignore la casse : `%LOCALAPPDATA%\WakfuRecomp\pret`). Limite :
-     un `XDG_DATA_HOME` personnalisé sous Linux recompile une fois de plus. `keeps_copy` :
-     oui, `folders.game` = `{local}/wakfu-recomp/work/game`, et `start` sans arguments. Version minimale du lanceur
+   - *Fait (prochaine version)* : *Niveau 3* : étape `prepare` (`--sans-lancer {input:game} {input:update}`). Le
+     schéma n'a pas de `timeout` : le lanceur arrête une étape muette pendant une heure, et la compilation écrit
+     une ligne par fichier. `version` : `kCodeGenere` (installateur), augmenté à la main quand le code généré change
+     (XenonRecomp, correctifs, `config/wakfu.toml`, `gen_imports`) ; même valeur : XenonRecomp n'est pas relancé
+     après une mise à jour, seule la compilation l'est ; règle notée dans `CONTRIBUTING.md`. `done` : témoin
+     `{local}/wakfu-recomp/pret`, écrit à la fin de la compilation et supprimé quand elle recommence (Windows ignore
+     la casse : `%LOCALAPPDATA%\WakfuRecomp\pret`). Limite : avec un `XDG_DATA_HOME` personnalisé sous Linux, le
+     témoin n'est pas là où le lanceur le cherche (installation redemandée, l'étape sort aussitôt). `keeps_copy` :
+     oui, `folders.game` = `{local}/wakfu-recomp/work/game`, et `start` sans arguments (avec `RECOMPLAUNCHER=1`, le
+     jeu démarre sans la fenêtre du lanceur) ; relancée sans la copie,
+     l'étape ne reçoit que la mise à jour et recompile depuis le jeu déjà préparé. Version minimale du lanceur
      indiquée dans le README.
-   - *Big Picture* : avec `RECOMPLAUNCHER_MODE=bigpicture`, sans bordure pour ce lancement seulement (sauf si le
-     joueur a choisi `plein_ecran`), sans réécrire `config.toml`. Avec `RECOMPLAUNCHER_PAD`,
-     choisir les icônes Xbox ou PlayStation (lié aux icônes de manette du point 5).
-   - *Linux* : avant la première compilation, le lanceur écrit les réglages dans `~/.config/WakfuRecomp`. Il trouve
-     le bon chemin une fois `wakfu` compilé.
+   - *Fait (prochaine version)* : *Big Picture* : avec `RECOMPLAUNCHER_MODE=bigpicture`, sans bordure pour ce
+     lancement seulement (sauf si le joueur a choisi `plein_ecran`), sans réécrire `config.toml` (taille et position
+     de la fenêtre non mémorisées). `RECOMPLAUNCHER_PAD` est noté au journal ; reste à choisir les icônes Xbox ou
+     PlayStation avec (lié aux icônes de manette du point 5).
+   - *Fait (prochaine version)* : *Linux* : avant la première compilation, le lanceur écrit les réglages dans
+     `~/.config/WakfuRecomp`. Il trouve le bon chemin (`userdata`) une fois `wakfu` compilé ; l'installateur y
+     reprend le `config.toml` de `~/.config/WakfuRecomp` quand `userdata` n'en a pas encore (jamais écrasé).
    - *À vérifier avant publication* (liste à suivre par le développeur sous Windows, publication une fois tout
      vert) : la reconnaissance du paquet XBLA (`ids` 584109AA, laissé
      de côté pour l'instant), `{input:update}` sans `into`, et les clés TOML `section/clé`.

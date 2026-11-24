@@ -7,7 +7,7 @@
     {
       "id": "game",
       "role": "game",
-      "label": "Your Islands of Wakfu Xbox Live Arcade package (title 584109AA), an ISO/XISO image of it or its extracted folder. The first start recompiles the game on your PC (a few minutes to an hour).",
+      "label": "Your Islands of Wakfu Xbox Live Arcade package (title 584109AA), an ISO/XISO image of it or its extracted folder. Setting it up recompiles the game on your PC (a few minutes to an hour); the copy is no longer needed after that.",
       "formats": [
         { "type": "file" },
         { "type": "folder" }
@@ -22,8 +22,14 @@
     }
   ],
   "start": {
+    "program": ["WakfuRecomp.exe", "WakfuRecomp"]
+  },
+  "prepare": {
     "program": ["WakfuRecomp.exe", "WakfuRecomp"],
-    "args": ["{input:game}", "{input:update}"]
+    "args": ["--sans-lancer", "{input:game}", "{input:update}"],
+    "label": "Recompiling the game on your PC (a few minutes to an hour)",
+    "done": ["{local}/wakfu-recomp/pret"],
+    "keeps_copy": true
   },
   "system": {
     "windows": { "version": "10", "graphics": { "vulkan": "1.3" } },
@@ -31,6 +37,7 @@
   },
   "saves": ["{config}/WakfuRecomp", "{local}/wakfu-recomp/userdata"],
   "folders": {
+    "game": [{ "path": "{local}/wakfu-recomp/work/game" }],
     "saves": [
       { "path": "{local}/wakfu-recomp/userdata", "if": "{local}/wakfu-recomp/wakfu" },
       { "path": "{config}/WakfuRecomp" }

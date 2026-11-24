@@ -20,7 +20,7 @@ réglage changé à la main l'affiche « Personnalisé ») ; `[post]` (anticrén
 | Section | Clé | Défaut | Effet |
 |---|---|---|---|
 | `[video]` | `largeur`, `hauteur` | 1280, 720 | taille de la fenêtre en mode fenêtré (320-16384 / 240-16384) |
-| | `mode` | `"fenetre"` | `fenetre`, `plein_ecran` (change le mode d'affichage) ou `sans_bordure` (plein écran du bureau) |
+| | `mode` | `"fenetre"` | `fenetre`, `plein_ecran` (change le mode d'affichage) ou `sans_bordure` (plein écran du bureau). Lancé depuis le mode Big Picture de RecompLauncher : `sans_bordure` pour ce lancement, sauf `plein_ecran` (fichier inchangé) |
 | | `ecran` | `0` | écran de la fenêtre (index, 0 = principal) ; écran absent : principal (message `[config]`) |
 | | `position_x`, `position_y` | (absentes) | position de la fenêtre dans l'écran, en pixels : mémorisées à la fermeture avec `ecran`, `largeur` et `hauteur` (mode `fenetre`, fenêtre ni agrandie ni réduite ; fenêtre fermée ou Quitter à la manette). Le jeu relit `config.toml` et le réécrit en entier (commentaires remis à neuf, autres valeurs gardées ; fichier illisible : rien n'est écrit). Absentes ou hors de l'écran : fenêtre centrée. Lanceur : changer d'écran recentre la fenêtre |
 | | `vsync` | `false` | présentation synchronisée sur l'écran (FIFO) ; sinon MAILBOX ou IMMEDIATE |

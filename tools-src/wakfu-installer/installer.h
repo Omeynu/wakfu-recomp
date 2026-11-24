@@ -42,7 +42,7 @@ void openWorkDir(Install& in, fs::path D); // crée D (marqueur .wakfurecomp), l
 fs::path dataDir(const fs::path& D);        // dossier des données du joueur (config.toml, sauvegardes)
 bool isPrepared(const Install& in);         // jeu préparé (work/game/patched/image.bin)
 bool isInstalled(const Install& in);        // jeu préparé et wakfu.exe construit
-bool isUpToDate(const Install& in);         // C++ généré par cette version des outils
+bool isUpToDate(const Install& in);         // jeu compilé par cette version des outils (témoin <D>/pret)
 double freeGb(const fs::path& D);
 void forceRebuild(const Install& in);       // « Recompiler » : C++ et compilation refaits
 

@@ -1,16 +1,11 @@
-## What's new in v0.1.4
+## What's new in v0.1.5
 
-- **Local co-op works**: a second controller (or keyboard + controller) can now join. Before, player 2's START did
-  nothing. Choose who uses what in Settings > Sound and controller (up to 4 controllers); player 2 has its own profile.
-- **1440p**: new *Internal resolution* setting (720p, 1440p, 2160p). 1440p holds 60 fps on a mid-range card.
-- **Graphics presets** in the launcher: Economy (laptops), Balanced, Quality (1440p, MSAA 4x); MSAA 2x/4x/8x,
-  anisotropic filtering up to 16x and sharper shadows can also be set one by one.
-- **Lighter on the CPU**: the renderer's thread uses about 30% less CPU per frame in busy areas (helps laptops).
-- **New options**: mute when the window is in the background, stick dead zone, rumble strength, screenshot key
-  (F12, saved in `captures`, with a "Screenshot saved" message for 2 s), screen choice and window position remembered.
-- **Save backups**: a copy of your saves is made at each start (last 5 kept) and can be restored from the launcher.
-- Your `config.toml` is never reset to defaults: a file with an invalid value is kept, and copied to
-  `config.toml.bak` before the launcher rewrites it.
+- **RecompLauncher**: the game is now set up once (recompiled on your PC) and your copy of the game is no longer
+  needed afterwards; the launcher knows when setup is finished. Updates that change the generated code recompile
+  the game automatically.
+- **Big Picture**: the game opens borderless (unless you chose fullscreen) and does not change your saved window
+  size or position.
+- **Linux**: settings chosen in RecompLauncher before the first setup are now used by the game.
 
 **No game files are included.** You need your own copy of Islands of Wakfu (XBLA, title `584109AA`) and its title update 2.
 
