@@ -37,7 +37,8 @@ void TextureDetruite(uint32_t res);   // DestructResource 821BB548 (avant l'orig
 // --- Fil natif ---
 // Vue de la texture de la constante `f` ; nulle si non gérée (l'appelant lie alors VueVide).
 VkImageView VueTexture(const uint32_t f[6]);
-VkImageView VueVide();   // 1x1 noire transparente (emplacement sans texture)
+VkImageView VueVide();
+uint32_t EpoqueTextures();   // change à chaque écriture ou destruction de texture (résultats de VueTexture)   // 1x1 noire transparente (emplacement sans texture)
 void TexturesLot(uint32_t image);   // début d'un lot (raccord NouveauLot) : libérations différées, journal
 
 }  // namespace wk::natif

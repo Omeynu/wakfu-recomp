@@ -25,6 +25,7 @@
 #include "kernel/window.h"
 #include "gpu/vk.h"
 #include "guest.h"
+#include "natif/etats.h"
 #include "natif/interfaces.h"
 #include "natif/tampons.h"
 #include "platform.h"
@@ -34,7 +35,7 @@
 
 uint64_t WkBouclesNs();          // kernel/core.cpp, fil courant
 uint64_t WkLecturesHorloge();
-namespace wk { uint32_t SwapsEmis(); }   // kernel/gpu.cpp : nombre de VdSwap émis par le jeu
+namespace wk { uint32_t SwapsEmis(); extern std::string g_dataDir; }   // kernel/gpu.cpp : nombre de VdSwap émis par le jeu
 
 namespace wk::natif {
 namespace {
@@ -124,16 +125,19 @@ void Envoyer(Commande&& c) {
         g_jeu.attenteMs += Ms(t0, Horloge::now());
         return;
     }
+    // le fil natif n'attend que sur une file vide : un réveil par paquet, pas par commande
+    const bool vide = g_file.empty();
     g_file.push_back(std::move(c));
-    g_cv.notify_one();
+    if (vide) g_cv.notify_one();
 }
 
 float F32(uint32_t a) { return std::bit_cast<float>(Ld32(a)); }
 
 // --- Constantes (fil du jeu) ---
 float g_constantes[2048];
-bool g_constantesChangees = true;
-std::shared_ptr<const std::array<float, 2048>> g_instantaneConstantes;
+bool g_constantesChangees[2] = {true, true};   // VS, PS
+std::shared_ptr<const std::array<float, 1024>> g_instantaneConstantes[2];
+uint64_t g_serieConstantes[2] = {};
 
 // Description d'une texture d'après son en-tête (fetch constant en +28 : format mot 1 bits 0-5, taille 2D mot 2)
 // Clé des textures natives : adresse physique des données (mot 1 de la constante de lecture, bits 12-28), commune aux
@@ -155,6 +159,7 @@ struct ImageNative {
     uint32_t formatInvite = 0;
     VkImageView lecture = VK_NULL_HANDLE;   // vue échantillonnable (profondeur seule pour D/S, sinon img.view)
     bool resolue = false;                   // écrite par un resolve natif : servie aux draws natifs
+    uint32_t echelle = 1;                   // pixels natifs par pixel invité (echelle_rendu)
 };
 // Causes des resolves non faits (ligne [natif N])
 enum Cause { kSansSource, kMip, kCreation, kVide, kFormats, kProfMsaa, kCauses };
@@ -181,9 +186,23 @@ struct Natif {
     uint32_t rt[4]{}, ds = 0;
     bool passe = false;
     uint32_t passeRt[4]{}, passeDs = 0;
+    bool passeSansDs = false;   // profondeur d'une autre échelle que la couleur (cible d'ombre agrandie) : non attachée
     VkExtent2D zone{};
+    uint32_t passeEchelle = 1;   // échelle des cibles de la passe ouverte (viewport, scissor, effacements)
     std::unordered_map<uint64_t, VkPipeline> pipelines;
     uint32_t image = 0;
+    uint32_t echelle = 1;   // définition interne (config echelle_rendu) : cibles natives ×echelle, tailles invitées inchangées
+    uint32_t ombres = 1;    // option ombres : cible de l'ombre (512x512 sans MSAA) ×ombres en plus de ×echelle
+    uint32_t versionTextures = 0;
+    // état dynamique (même liste pour tous les pipelines) et pipeline liés dans n.cmds : non réémis s'ils ne changent pas
+    struct Dynamique {
+        VkViewport v;
+        VkRect2D r;
+        float melange[4];
+        uint32_t stencil[6];
+    } dyn{};
+    VkPipeline pipelineLie = VK_NULL_HANDLE;
+    bool dynLie = false;   // change quand VueResolue peut rendre autre chose (VersionTextures)
     Stats stats;
     // Rappels (natif seul) : (numéro du lot à attendre, écriture) ; lots numérotés à la soumission
     std::deque<std::pair<uint64_t, std::function<void()>>> rappels;
@@ -200,15 +219,22 @@ struct Natif {
     VkQueryPool prof = VK_NULL_HANDLE;
     std::vector<std::string> profNoms[2];
     std::unordered_map<std::string, std::pair<double, uint32_t>> profCumul;   // nom -> (ms, nombre) sur 240 images
+    // Répartition CPU (Basculer) : images n % 60 >= 50 seulement
+    bool chrono = false;
+    Poste poste = kAutres;
+    std::chrono::steady_clock::time_point t;
+    double postes[kPostes]{};   // ms cumulées sur les images mesurées
 };
 Natif n;
 constexpr uint32_t kProfMax = 4096;   // horodatages par lot
 int g_profDetail = 0;   // WAKFU_PROFIL_GPU : 1 noms détaillés, 2 en plus un horodatage par draw
-bool g_msaa = true;     // [video] multi_echantillonnage retenu pour ce GPU (Initialiser)
+uint32_t g_msaa = 4;    // [video] multi_echantillonnage : échantillons retenus pour ce GPU, 0 = désactivé (Initialiser)
 
 // Image mesurée : sans WAKFU_PROFIL_GPU, 10 images sur 60 seulement (horodatages ≈ 3 % du GPU). Un lot ne couvre
 // qu'une image (soumis à l'échange).
 bool Mesure() { return n.prof && (g_profDetail || n.image % 60 >= 50); }
+const char* const kNomsPostes[kPostes] = {"autres", "file", "shaders", "sommets", "pipelines", "constantes", "textures",
+                                           "descripteurs", "commandes", "passes", "resolves", "échange", "attente"};
 // Écart entre deux horodatages en ms (bits valides de la file seulement)
 double Ecart(uint64_t a, uint64_t b) { return double((b - a) & n.vk->timestampMask) * n.vk->timestampPeriod / 1e6; }
 
@@ -234,9 +260,11 @@ void Barriere(VkCommandBuffer cmd) {
 
 VkCommandBuffer Cmd() {
     if (!n.enregistre) {
+        const Poste p = Basculer(kAttente);
         const auto t0 = Horloge::now();
         vkWaitForFences(n.vk->device, 1, &n.fences[n.slot], VK_TRUE, UINT64_MAX);
         n.attenteGpuMs += Ms(t0, Horloge::now());
+        Basculer(p);
         const uint32_t q = 2 * uint32_t(n.slot);
         uint64_t ts[2];
         if (n.mesure[n.slot] && vkGetQueryPoolResults(n.vk->device, n.temps, q, 2, sizeof ts, ts, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS &&
@@ -267,6 +295,8 @@ VkCommandBuffer Cmd() {
         }
         if (Mesure()) vkCmdResetQueryPool(n.envois[n.slot], n.prof, n.slot * kProfMax, kProfMax);
         n.enregistre = true;
+        n.dynLie = false;
+        n.pipelineLie = VK_NULL_HANDLE;
         Marque("debut");
         NouveauLot(uint32_t(n.slot), n.image);
     }
@@ -294,9 +324,11 @@ void Soumettre(bool attendre) {
         vkQueueSubmit(n.vk->queue, 1, &si, n.fences[n.slot]);
     }
     if (attendre) {
+        const Poste p = Basculer(kAttente);
         const auto t0 = Horloge::now();
         vkWaitForFences(n.vk->device, 1, &n.fences[n.slot], VK_TRUE, UINT64_MAX);
         n.attenteGpuMs += Ms(t0, Horloge::now());
+        Basculer(p);
     }
 }
 
@@ -310,9 +342,11 @@ void Retirer(bool bloquer) {
         const uint64_t id = n.rappels.front().first;
         if (id > n.soumissions) { FermerPasse(); Soumettre(false); }
         const int s = n.idSlot[0] >= id && (n.idSlot[1] < id || n.idSlot[0] < n.idSlot[1]) ? 0 : 1;
+        const Poste p = Basculer(kAttente);
         const auto t0 = Horloge::now();
         if (vkWaitForFences(n.vk->device, 1, &n.fences[s], VK_TRUE, 200000) == VK_SUCCESS) n.fini = std::max(n.fini, n.idSlot[s]);
         n.attenteGpuMs += Ms(t0, Horloge::now());
+        Basculer(p);
     }
     while (!n.rappels.empty() && n.rappels.front().first <= n.fini) {
         n.rappels.front().second();
@@ -357,6 +391,7 @@ void Remplacer(std::unordered_map<uint32_t, ImageNative>& m, uint32_t cle, const
     auto it = m.find(cle);
     if (it != m.end()) n.aDetruire.push_back({n.image + 2, it->second});   // encore utilisée par les lots en vol
     m[cle] = img;
+    n.versionTextures++;
 }
 
 ImageNative* Trouver(std::unordered_map<uint32_t, ImageNative>& m, uint32_t cle) {
@@ -396,18 +431,24 @@ bool OuvrirPasse() {
         couleur[nb].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         couleur[nb].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         nb++;
+        n.passeEchelle = c->echelle;
         w = std::min(w, c->img.width);
         h = std::min(h, c->img.height);
     }
     ImageNative* d = Trouver(n.surfaces, n.ds);
+    // Zone 1 : la passe de l'ombre (512x512) garde la profondeur 1280x720 attachée sans s'en servir ; agrandie par
+    // l'option ombres, elle limiterait la passe à la taille de la profondeur.
+    n.passeSansDs = d && nb && d->echelle != n.passeEchelle;
+    if (n.passeSansDs) d = nullptr;
     if (d) {
         prof.imageView = d->img.view;
         prof.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         prof.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         prof.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        if (!nb) n.passeEchelle = d->echelle;
         w = std::min(w, d->img.width);
         h = std::min(h, d->img.height);
-    } else if (n.ds) n.stats.sansCible++;
+    } else if (n.ds && !n.passeSansDs) n.stats.sansCible++;
     if (!nb && !d) return false;
     VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, {w, h}};
@@ -424,10 +465,14 @@ bool OuvrirPasse() {
     return true;
 }
 
-VkRect2D Rect(const Commande& c, VkExtent2D max) {
+// Rectangle invité (x0, y0, x1, y1) en pixels natifs d'une cible d'échelle s, borné à `max`.
+VkRect2D Rect(const Commande& c, VkExtent2D max, uint32_t s) {
     if (!c.avecRect) return {{0, 0}, max};
-    const int32_t x0 = std::clamp(c.rect[0], 0, int32_t(max.width)), y0 = std::clamp(c.rect[1], 0, int32_t(max.height));
-    const int32_t x1 = std::clamp(c.rect[2], x0, int32_t(max.width)), y1 = std::clamp(c.rect[3], y0, int32_t(max.height));
+    int32_t g[4];
+    memcpy(g, c.rect, sizeof g);
+    AgrandirRect(g, s);
+    const int32_t x0 = std::clamp(g[0], 0, int32_t(max.width)), y0 = std::clamp(g[1], 0, int32_t(max.height));
+    const int32_t x1 = std::clamp(g[2], x0, int32_t(max.width)), y1 = std::clamp(g[3], y0, int32_t(max.height));
     return {{x0, y0}, {uint32_t(x1 - x0), uint32_t(y1 - y0)}};
 }
 
@@ -446,12 +491,12 @@ void FaireEffacer(const Commande& c) {
         }
         idx++;
     }
-    if (Trouver(n.surfaces, n.ds) && (c.a & 0x30)) {
+    if (!n.passeSansDs && Trouver(n.surfaces, n.ds) && (c.a & 0x30)) {
         at[nb] = {VkImageAspectFlags((c.a & 0x10 ? VK_IMAGE_ASPECT_DEPTH_BIT : 0) | (c.a & 0x20 ? VK_IMAGE_ASPECT_STENCIL_BIT : 0)), 0, {}};
         at[nb].clearValue.depthStencil = {c.z, c.b & 0xFF};
         nb++;
     }
-    VkClearRect r{Rect(c, n.zone), 0, 1};
+    VkClearRect r{Rect(c, n.zone, n.passeEchelle), 0, 1};
     if (nb && r.rect.extent.width && r.rect.extent.height) vkCmdClearAttachments(Cmd(), nb, at, 1, &r);
 }
 
@@ -470,10 +515,10 @@ void NonFait(Cause k, const Commande& c, const ImageNative* src, const ImageNati
 }
 
 // Effacement d'une cible après un resolve : passe vide en CLEAR limitée au rectangle du resolve (toute l'image sans
-// rectangle), comme la console. (Repris de n10, 9c64b6e, sans l'échelle.)
+// rectangle), comme la console, à l'échelle de la cible.
 void EffacerApresResolve(VkCommandBuffer cmd, const ImageNative& t, const Commande& c, const VkClearValue& v) {
     const VkImageAspectFlags aspect = vk::ImageAspect(t.img.format);
-    const VkRect2D zone = Rect(c, {t.img.width, t.img.height});
+    const VkRect2D zone = Rect(c, {t.img.width, t.img.height}, t.echelle);
     // Image entière : contenu abandonné (UNDEFINED) puis passe CLEAR en disposition d'attache, que le pilote peut
     // effacer « vite » (métadonnées de compression seules) ; en GENERAL, l'effacement écrit chaque pixel.
     const bool entiere = !zone.offset.x && !zone.offset.y && zone.extent.width == t.img.width && zone.extent.height == t.img.height;
@@ -502,37 +547,43 @@ void EffacerApresResolve(VkCommandBuffer cmd, const ImageNative& t, const Comman
 
 void FaireResoudre(const Commande& c) {
     FermerPasse();
+    n.versionTextures++;   // vues résolues changées (VueResolue)
     n.stats.resolves++;
     const bool prof = c.a & 4;
     const uint32_t cleSrc = prof ? n.ds : n.rt[c.a & 3];
     ImageNative* src = Trouver(n.surfaces, cleSrc);
     if (!src) { NonFait(kSansSource, c, src, nullptr); return; }
+    const uint32_t s = src->echelle;   // destination à l'échelle de la source
     // Tuilage (zone 1 : surface 4x de 320x720, 4 bandes résolues aux rectangles écran 0-320 ... 960-1280) : le natif
     // dessine une seule fois en coordonnées écran, la surface est agrandie au rectangle demandé (effet à l'image suivante).
     // Les autres surfaces attachées à la taille de la bande le sont aussi : la passe est limitée à la plus petite
     // (Grougal : cible 1024x1024 en 2 bandes de 1024x512, profondeur jamais résolue, moitié basse jamais dessinée).
-    if (c.avecRect && (c.rect[2] > int32_t(src->img.width) || c.rect[3] > int32_t(src->img.height))) {
+    if (c.avecRect && (c.rect[2] * int32_t(s) > int32_t(src->img.width) || c.rect[3] * int32_t(s) > int32_t(src->img.height))) {
         const uint32_t w0 = src->img.width, h0 = src->img.height;
-        const uint32_t w = std::max<uint32_t>(c.rect[2], w0), h = std::max<uint32_t>(c.rect[3], h0);
+        const uint32_t w = std::max<uint32_t>(c.rect[2] * s, w0), h = std::max<uint32_t>(c.rect[3] * s, h0);
         for (uint32_t cle : {n.rt[0], n.rt[1], n.rt[2], n.rt[3], n.ds}) {
-            const ImageNative* s = Trouver(n.surfaces, cle);
+            const ImageNative* a = Trouver(n.surfaces, cle);
             ImageNative grande;
-            if (s && s->img.width == w0 && s->img.height == h0 && CreerImage(w, h, s->formatInvite, s->ech, true, &grande))
+            if (a && a->img.width == w0 && a->img.height == h0 && a->echelle == s &&
+                CreerImage(w, h, a->formatInvite, a->ech, true, &grande)) {
+                grande.echelle = s;
                 Remplacer(n.surfaces, cle, grande);
+            }
         }
         src = Trouver(n.surfaces, cleSrc);
     }
     if (c.d) { NonFait(kMip, c, src, nullptr); return; }   // niveau de mip > 0 : à faire
     ImageNative* dst = Trouver(n.textures, c.b);
-    if (!dst || dst->img.width != c.w || dst->img.height != c.h || dst->formatInvite != c.format) {
+    if (!dst || dst->echelle != s || dst->img.width != c.w * s || dst->img.height != c.h * s || dst->formatInvite != c.format) {
         ImageNative nouvelle;
-        if (!CreerImage(c.w, c.h, c.format, VK_SAMPLE_COUNT_1_BIT, true, &nouvelle)) { NonFait(kCreation, c, src, nullptr); return; }
+        if (!CreerImage(c.w * s, c.h * s, c.format, VK_SAMPLE_COUNT_1_BIT, true, &nouvelle)) { NonFait(kCreation, c, src, nullptr); return; }
+        nouvelle.echelle = s;
         Remplacer(n.textures, c.b, nouvelle);
         dst = &n.textures[c.b];
     }
     VkCommandBuffer cmd = Cmd();
     Barriere(cmd);
-    const VkRect2D r = Rect(c, {src->img.width, src->img.height});
+    const VkRect2D r = Rect(c, {src->img.width, src->img.height}, s);
     // Resolve de toute la cible couleur suivi de son effacement (0x100) : la cible et la texture échangent leurs
     // images au lieu d'une copie, puis la (nouvelle) cible est effacée. Même résultat, une copie plein écran de moins.
     if ((c.a & 0x104) == 0x100 && src->ech == VK_SAMPLE_COUNT_1_BIT && !c.e && !r.offset.x && !r.offset.y &&
@@ -545,7 +596,7 @@ void FaireResoudre(const Commande& c) {
         n.stats.echanges++;
         if (n.prof) Marque(g_profDetail ? "resolve C echange " + NomImage(dst) : "resolves");
     } else {
-        const int32_t dx = int32_t(c.e >> 16), dy = int32_t(c.e & 0xFFFF);   // point de destination (x << 16 | y)
+        const int32_t dx = PointX(c.e, s), dy = PointY(c.e, s);   // point de destination (x << 16 | y)
         const uint32_t w = std::min<int64_t>(r.extent.width, std::max<int64_t>(0, int64_t(dst->img.width) - dx));
         const uint32_t h = std::min<int64_t>(r.extent.height, std::max<int64_t>(0, int64_t(dst->img.height) - dy));
         const VkImageAspectFlags aspect = vk::ImageAspect(src->img.format);
@@ -620,7 +671,7 @@ VkPipeline Pipeline(const Instantane& d, VkPrimitiveTopology topo, const Shaders
     VkSampleCountFlagBits ech = VK_SAMPLE_COUNT_1_BIT;
     for (int i = 0; i < 4; i++)
         if (ImageNative* c = Trouver(n.surfaces, n.passeRt[i])) { fc[nb++] = c->img.format; ech = c->ech; }
-    ImageNative* ds = Trouver(n.surfaces, n.passeDs);
+    ImageNative* ds = n.passeSansDs ? nullptr : Trouver(n.surfaces, n.passeDs);
     if (ds) ech = ds->ech;
     // les masques et la référence du stencil sont dynamiques : hors de la clé
     const uint32_t cleRegs[5] = {d.regs.depthControl, d.regs.blendControl, d.regs.colorControl, d.regs.modeControl, d.regs.colorMask};
@@ -691,33 +742,54 @@ void FaireDessiner(const Instantane& d) {
         return;
     }
     ShadersNatifs sh;
+    Basculer(kShaders);
     if (!ObtenirShaders(d, &sh)) { n.stats.sansShader++; n.stats.shader[sh.echec & 3]++; return; }
+    Basculer(kPasses);
     if (!OuvrirPasse()) { n.stats.sansPasse++; return; }
+    Basculer(kSommets);
     SommetsNatifs so;
-    so.cible = n.zone;
+    const uint32_t s = n.passeEchelle;
+    so.cible = {n.zone.width / s, n.zone.height / s};   // sommets en pixels invités (VTE sans échelle)
     if (!ObtenirSommets(d, &so)) { n.stats.sansSommets++; n.stats.sommets[so.echec % 3]++; return; }
+    Basculer(kPipeline);
     VkPipeline p = Pipeline(d, topo, sh, so);
     if (!p) { n.stats.pipeline++; return; }
+    Basculer(kCommandes);
     VkCommandBuffer cmd = Cmd();
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+    if (p != n.pipelineLie) vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
+    n.pipelineLie = p;
     // hauteur positive : les VS précompilés inversent déjà Y (-fvk-invert-y) ; même sens des faces qu'un viewport
     // négatif sans inversion (le sens est jugé dans le repère de l'image), cf. etats.h
-    const VkViewport v{d.viewport[0], d.viewport[1], d.viewport[2], d.viewport[3], d.viewport[4], d.viewport[5]};
-    vkCmdSetViewport(cmd, 0, 1, &v);
+    Natif::Dynamique y{};   // initialisé à zéro : comparé octet à octet
+    float vp[6];
+    memcpy(vp, d.viewport, sizeof vp);
+    AgrandirViewport(vp, s);
+    y.v = {vp[0], vp[1], vp[2], vp[3], vp[4], vp[5]};
     Commande sc{Op::Dessiner};
     sc.avecRect = d.scissorActif;
     memcpy(sc.rect, d.scissor, sizeof sc.rect);
-    const VkRect2D r = Rect(sc, n.zone);
-    vkCmdSetScissor(cmd, 0, 1, &r);
-    vkCmdSetBlendConstants(cmd, d.constanteMelange);
+    y.r = Rect(sc, n.zone, s);
+    memcpy(y.melange, d.constanteMelange, sizeof y.melange);
     const EtatPipeline e = TraduireEtat(d.regs, true);
-    vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_FRONT_BIT, e.profondeur.front.reference);
-    vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_BACK_BIT, e.profondeur.back.reference);
-    vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_FRONT_BIT, e.profondeur.front.compareMask);
-    vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_BACK_BIT, e.profondeur.back.compareMask);
-    vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_FRONT_BIT, e.profondeur.front.writeMask);
-    vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_BACK_BIT, e.profondeur.back.writeMask);
+    const auto& pf = e.profondeur;
+    const uint32_t st[6] = {pf.front.reference, pf.back.reference, pf.front.compareMask, pf.back.compareMask,
+                            pf.front.writeMask, pf.back.writeMask};
+    memcpy(y.stencil, st, sizeof st);
+    if (!n.dynLie || memcmp(&y.v, &n.dyn.v, sizeof y.v)) vkCmdSetViewport(cmd, 0, 1, &y.v);
+    if (!n.dynLie || memcmp(&y.r, &n.dyn.r, sizeof y.r)) vkCmdSetScissor(cmd, 0, 1, &y.r);
+    if (!n.dynLie || memcmp(y.melange, n.dyn.melange, sizeof y.melange)) vkCmdSetBlendConstants(cmd, y.melange);
+    if (!n.dynLie || memcmp(y.stencil, n.dyn.stencil, sizeof y.stencil)) {
+        vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_FRONT_BIT, st[0]);
+        vkCmdSetStencilReference(cmd, VK_STENCIL_FACE_BACK_BIT, st[1]);
+        vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_FRONT_BIT, st[2]);
+        vkCmdSetStencilCompareMask(cmd, VK_STENCIL_FACE_BACK_BIT, st[3]);
+        vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_FRONT_BIT, st[4]);
+        vkCmdSetStencilWriteMask(cmd, VK_STENCIL_FACE_BACK_BIT, st[5]);
+    }
+    n.dyn = y;
+    n.dynLie = true;
     const int lie = sh.lier ? sh.lier(cmd, sh.disposition, d) : 0;
+    Basculer(kCommandes);
     if (lie == 2) { n.stats.liaison++; return; }
     if (lie == 1) n.stats.texturesSecours++;
     if (so.dessiner) so.dessiner(cmd, d);
@@ -773,7 +845,11 @@ void Presenter(bool attendre) {
     if (!g_aPresenter.actif) return;
     {
         std::unique_lock<std::mutex> l(g_mutex);
-        if (attendre) g_cv.wait_for(l, std::chrono::milliseconds(100), PretAPresenter);
+        if (attendre) {
+            const Poste p = Basculer(kAttente);
+            g_cv.wait_for(l, std::chrono::milliseconds(100), PretAPresenter);
+            Basculer(p);
+        }
         else if (!PretAPresenter()) return;
     }
     g_aPresenter.actif = false;
@@ -796,11 +872,21 @@ void FaireEchange(const Commande& c) {
     }
     else if (n.image < 3 || n.image % 600 == 0) fprintf(stderr, "[natif %u] pas d'image native à présenter\n", n.image);
     std::string chemin;
-    if (CaptureVoulue(n.image + 1, &chemin)) {
+    const bool touche = window::CaptureDemandee();
+    if (touche) {   // option touche_capture : <données>/captures/capture_<date>_<image>.png
+        char date[32];
+        const std::time_t t = std::time(nullptr);
+        std::strftime(date, sizeof date, "%Y-%m-%d_%H-%M-%S", std::localtime(&t));
+        std::error_code ec;
+        std::filesystem::create_directories(g_dataDir + "/captures", ec);
+        chemin = g_dataDir + "/captures/capture_" + date + "_" + std::to_string(n.image + 1) + ".png";
+    }
+    if (!chemin.empty() || CaptureVoulue(n.image + 1, &chemin)) {
         std::vector<uint8_t> rgba;
         const bool ok = img && img->ech == VK_SAMPLE_COUNT_1_BIT && Relire(img->img, &rgba) &&
                         WritePng(chemin, img->img.width, img->img.height, rgba);
         fprintf(stderr, "[capture] %s (image native présentée) : %s\n", chemin.c_str(), ok ? "écrite" : "échec");
+        if (ok && touche) window::CaptureFaite();
     }
     n.slot ^= 1;
     for (size_t i = 0; i < n.aDetruire.size();) {
@@ -837,9 +923,16 @@ void FaireEchange(const Commande& c) {
             }
             n.profCumul.clear();
         }
+        std::string postes;   // répartition du fil natif (10 images mesurées, attentes à part)
+        for (int k = 0; k < kPostes; k++) {
+            char b[48];
+            snprintf(b, sizeof b, "%s%s %.2f", postes.empty() ? " ; postes (ms/image, 10 dernières) : " : ", ", kNomsPostes[k], n.postes[k] / 10);
+            postes += b;
+            n.postes[k] = 0;
+        }
         if (n.image) fprintf(stderr, "[natif %u] par image (60 dernières) : GPU %.2f ms (%.1f lots%s), CPU du fil natif %.2f ms, "
-                             "attente des fences %.2f ms, présentation %.2f ms\n",
-                             n.image, n.gpuMs / 60, n.lots / 60.0, parts.c_str(), cpu / 60, n.attenteGpuMs / 60, n.presentMs / 60);
+                             "attente des fences %.2f ms, présentation %.2f ms%s\n",
+                             n.image, n.gpuMs / 60, n.lots / 60.0, parts.c_str(), cpu / 60, n.attenteGpuMs / 60, n.presentMs / 60, postes.c_str());
         n.attenteGpuMs = n.presentMs = 0;
         n.cpu0 = t;
         n.gpuMs = 0;
@@ -854,6 +947,8 @@ void FaireEchange(const Commande& c) {
     }
     n.stats = Stats{};
     n.image++;
+    n.chrono = n.image % 60 >= 50;
+    if (n.chrono) n.t = std::chrono::steady_clock::now();
 }
 
 bool Initialiser() {
@@ -884,9 +979,15 @@ bool Initialiser() {
     VkFormatProperties fp;
     vkGetPhysicalDeviceFormatProperties(n.vk->physical, VK_FORMAT_D24_UNORM_S8_UINT, &fp);
     if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)) n.d24s8 = VK_FORMAT_D32_SFLOAT_S8_UINT;
-    g_msaa = config::MsaaActif(config::g.msaa, n.vk->deviceType);
-    fprintf(stderr, "[natif] rendu natif sur %s (type %d) ; profondeur %s ; multi-échantillonnage %s (%s)\n", n.vk->deviceName.c_str(),
-            n.vk->deviceType, n.d24s8 == VK_FORMAT_D24_UNORM_S8_UINT ? "D24S8" : "D32S8", g_msaa ? "oui" : "non", config::g.msaa.c_str());
+    g_msaa = config::MsaaEchantillons(config::g.msaa, n.vk->deviceType);
+    while (g_msaa > 1 && !(n.vk->sampleCounts & g_msaa)) g_msaa /= 2;   // plafond du GPU
+    if (g_msaa == 1) g_msaa = 0;
+    n.echelle = uint32_t(std::clamp(config::g.renderScale, 1, 4));
+    n.ombres = config::g.ombres == "x4" ? 4 : config::g.ombres == "x2" ? 2 : 1;
+    fprintf(stderr, "[natif] rendu natif sur %s (type %d) ; profondeur %s ; multi-échantillonnage x%u (%s ; GPU : 0x%X) ; définition interne x%u ; ombres x%u ; anisotrope x%g (GPU : x%g)\n",
+            n.vk->deviceName.c_str(), n.vk->deviceType, n.d24s8 == VK_FORMAT_D24_UNORM_S8_UINT ? "D24S8" : "D32S8",
+            g_msaa, config::g.msaa.c_str(), n.vk->sampleCounts, n.echelle, n.ombres,
+            config::g.anisotropy > 1 ? std::min(float(config::g.anisotropy), n.vk->maxAnisotropy) : 1.0f, n.vk->maxAnisotropy);
     return true;
 }
 
@@ -918,7 +1019,9 @@ bool Fusionner(Commande& p, const Commande& c) {
 void ResolveEnAttente() {
     if (!g_resolveAttend) return;
     g_resolveAttend = false;
+    Basculer(kResolves);
     FaireResoudre(g_resolveEnAttente);
+    Basculer(kAutres);
 }
 
 void Traiter(Commande& c) {
@@ -934,7 +1037,12 @@ void Traiter(Commande& c) {
         case Op::Surface: {
             n.stats.surfaces++;
             ImageNative img;
-            if (CreerImage(c.b, c.c, c.d, g_msaa ? Echantillons(c.e) : VK_SAMPLE_COUNT_1_BIT, true, &img)) {
+            // cible de l'ombre (zone 1 : masque 512x512, couleur sans MSAA) agrandie par l'option ombres
+            const bool ombre = c.b == 512 && c.c == 512 && Echantillons(c.e) == VK_SAMPLE_COUNT_1_BIT &&
+                               !Profondeur(FormatCible(c.d, n.d24s8));
+            const uint32_t s = n.echelle * (ombre ? n.ombres : 1);
+            if (CreerImage(c.b * s, c.c * s, c.d, g_msaa && Echantillons(c.e) != VK_SAMPLE_COUNT_1_BIT ? VkSampleCountFlagBits(g_msaa) : VK_SAMPLE_COUNT_1_BIT, true, &img)) {
+                img.echelle = s;
                 FermerPasse();   // l'ancienne image de ce pointeur peut être attachée
                 Remplacer(n.surfaces, c.a, img);
             } else fprintf(stderr, "[natif] surface %08X %ux%u : format %08X non pris en charge\n", c.a, c.b, c.c, c.d);
@@ -943,16 +1051,19 @@ void Traiter(Commande& c) {
         case Op::Texture: {
             ImageNative* t = Trouver(n.textures, c.a);
             ImageNative img;
-            if ((!t || t->img.width != c.w || t->img.height != c.h || t->formatInvite != c.format) &&
-                CreerImage(c.w, c.h, c.format, VK_SAMPLE_COUNT_1_BIT, true, &img))
+            const uint32_t s = n.echelle;   // refaite au resolve si la source a une autre échelle
+            if ((!t || t->img.width != c.w * s || t->img.height != c.h * s || t->formatInvite != c.format) &&
+                CreerImage(c.w * s, c.h * s, c.format, VK_SAMPLE_COUNT_1_BIT, true, &img)) {
+                img.echelle = s;
                 Remplacer(n.textures, c.a, img);
+            }
             break;
         }
         case Op::Cible: n.rt[c.a & 3] = c.b; break;
         case Op::Profondeur: n.ds = c.a; break;
-        case Op::Effacer: FaireEffacer(c); break;
+        case Op::Effacer: Basculer(kPasses); FaireEffacer(c); break;
         case Op::Dessiner: FaireDessiner(*c.draw); break;
-        case Op::Echange: FaireEchange(c); break;
+        case Op::Echange: Basculer(kEchange); FaireEchange(c); break;
         case Op::Rappel: n.rappels.emplace_back(n.enregistre ? n.soumissions + 1 : n.soumissions, std::move(c.rappel)); break;
     }
 }
@@ -972,10 +1083,11 @@ void Boucle() {
         g_cvEchange.notify_all();
         RenduImpossible("ressources Vulkan du rendu natif (pool de commandes, fences) non créées");
     }
+    std::deque<Commande> lot;   // commandes prises d'un coup dans la file (un verrou par paquet)
     for (;;) {
         Commande c{Op::Cible};
-        bool aTraiter;
-        {
+        bool aTraiter = !lot.empty();
+        if (!aTraiter) {
             std::unique_lock<std::mutex> l(g_mutex);
             // file vide, rappels en attente : leur lot est soumis et attendu (le jeu attend peut-être la barrière)
             while (g_file.empty() && !n.rappels.empty() && !PretAPresenter()) {
@@ -987,13 +1099,19 @@ void Boucle() {
                 Retirer(true);
                 l.lock();
             }
+            Basculer(kAttente);
             g_cv.wait(l, [] { return !g_file.empty() || PretAPresenter(); });
+            Basculer(kFile);
             aTraiter = !g_file.empty();   // sinon réveil pour la présentation seule
-            if (aTraiter) { c = std::move(g_file.front()); g_file.pop_front(); }
+            lot.swap(g_file);
         }
+        if (aTraiter) { c = std::move(lot.front()); lot.pop_front(); }
+        Basculer(kEchange);
         Presenter(false);
+        Basculer(kAutres);
         if (!aTraiter) continue;
         Traiter(c);
+        Basculer(kAutres);
         if (!n.rappels.empty()) Retirer(false);
         if (c.op == Op::Echange) {
             std::lock_guard<std::mutex> l(g_mutex);
@@ -1001,6 +1119,7 @@ void Boucle() {
             g_echangesFaits++;
             g_cvEchange.notify_all();
         }
+        Basculer(kFile);   // destruction de la commande comprise
     }
 }
 
@@ -1031,6 +1150,7 @@ void Rappel(std::function<void()> op) {
     c.rappel = std::move(op);
     Envoyer(std::move(c));
 }
+uint32_t VersionTextures() { return n.versionTextures; }
 VkImageView VueResolue(uint32_t mot1) {
     ImageNative* t = Trouver(n.textures, Base(mot1));
     if (!t || !t->resolue || !t->lecture) return VK_NULL_HANDLE;
@@ -1038,6 +1158,16 @@ VkImageView VueResolue(uint32_t mot1) {
     return t->lecture;
 }
 VkCommandBuffer CmdEnvoi() { Cmd(); return n.envois[n.slot]; }
+Poste Basculer(Poste p) {
+    const Poste avant = n.poste;
+    n.poste = p;
+    if (n.chrono) {
+        const auto t = std::chrono::steady_clock::now();
+        n.postes[avant] += std::chrono::duration<double, std::milli>(t - n.t).count();
+        n.t = t;
+    }
+    return avant;
+}
 vk::Context* Contexte() { return n.vk; }
 
 void CreationSurface(uint32_t surf, uint32_t w, uint32_t h, uint32_t format, uint32_t ms) {
@@ -1076,7 +1206,7 @@ void SynchroConstantes(uint32_t dev) {
             const int bloc = std::countl_zero(m);
             m &= ~(1ull << (63 - bloc));
             for (int i = 0; i < 16; i++) g_constantes[s * 1024 + bloc * 16 + i] = F32(base + bloc * 64 + i * 4);
-            g_constantesChangees = true;
+            g_constantesChangees[s] = true;
         }
     }
 }
@@ -1104,13 +1234,17 @@ void Resoudre(uint32_t flags, uint32_t rect, uint32_t tex, uint32_t point, uint3
 
 void Relever(uint32_t dev, Instantane* d) {
     SynchroConstantes(dev);
-    if (g_constantesChangees || !g_instantaneConstantes) {
-        auto a = std::make_shared<std::array<float, 2048>>();
-        memcpy(a->data(), g_constantes, sizeof g_constantes);
-        g_instantaneConstantes = std::move(a);
-        g_constantesChangees = false;
+    for (int s = 0; s < 2; s++) {   // VS et PS à part : le jeu change surtout les constantes VS d'un draw à l'autre
+        if (g_constantesChangees[s] || !g_instantaneConstantes[s]) {
+            auto a = std::make_shared<std::array<float, 1024>>();
+            memcpy(a->data(), g_constantes + 1024 * s, 4096);
+            g_instantaneConstantes[s] = std::move(a);
+            g_serieConstantes[s]++;
+            g_constantesChangees[s] = false;
+        }
+        d->constantes[s] = g_instantaneConstantes[s];
+        d->serieConstantes[s] = g_serieConstantes[s];
     }
-    d->constantes = g_instantaneConstantes;
     d->ps = Ld32(dev + 0x328C);
     d->vs = Ld32(dev + 0x3290);
     d->declaration = Ld32(dev + 0x2F58);

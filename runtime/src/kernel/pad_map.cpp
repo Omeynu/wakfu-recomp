@@ -4,6 +4,8 @@
 #include <SDL_gamecontroller.h>
 #include <SDL_keyboard.h>
 #include <SDL_scancode.h>
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 
@@ -33,9 +35,17 @@ SDL_Scancode g_stick[2][4] = {{SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, S
 
 int16_t FlipY(int16_t v) { return v == -32768 ? 32767 : int16_t(-v); }   // SDL : bas positif ; XINPUT : haut positif
 uint8_t Trigger(int16_t v) { return v <= 0 ? 0 : uint8_t((int(v) * 255 + 16383) / 32767); }
+// Zone morte radiale : amplitude <= zm -> repos ; au-delà, (amplitude - zm) / (1 - zm) dans la même direction.
+void ZoneMorte(int16_t* x, int16_t* y, float zm) {
+    if (zm <= 0.0f) return;
+    const float m = std::hypot(float(*x), float(*y)) / 32767.0f;
+    const float k = m <= zm ? 0.0f : (m - zm) / (1.0f - zm) / m;
+    *x = int16_t(std::clamp(std::lround(*x * k), -32768L, 32767L));
+    *y = int16_t(std::clamp(std::lround(*y * k), -32768L, 32767L));
+}
 }  // namespace
 
-Pad MapPad(const int16_t axes[6], uint32_t buttons, const uint8_t* keys) {
+Pad MapPad(const int16_t axes[6], uint32_t buttons, const uint8_t* keys, float zoneMorte) {
     static const struct { int sdl; uint16_t x; } kButtons[] = {
         {SDL_CONTROLLER_BUTTON_A, kA}, {SDL_CONTROLLER_BUTTON_B, kB}, {SDL_CONTROLLER_BUTTON_X, kX},
         {SDL_CONTROLLER_BUTTON_Y, kY}, {SDL_CONTROLLER_BUTTON_BACK, kBack}, {SDL_CONTROLLER_BUTTON_START, kStart},
@@ -50,6 +60,8 @@ Pad MapPad(const int16_t axes[6], uint32_t buttons, const uint8_t* keys) {
     p.ly = FlipY(axes[SDL_CONTROLLER_AXIS_LEFTY]);
     p.rx = axes[SDL_CONTROLLER_AXIS_RIGHTX];
     p.ry = FlipY(axes[SDL_CONTROLLER_AXIS_RIGHTY]);
+    ZoneMorte(&p.lx, &p.ly, zoneMorte);
+    ZoneMorte(&p.rx, &p.ry, zoneMorte);
     p.lt = Trigger(axes[SDL_CONTROLLER_AXIS_TRIGGERLEFT]);
     p.rt = Trigger(axes[SDL_CONTROLLER_AXIS_TRIGGERRIGHT]);
     if (!keys) return p;

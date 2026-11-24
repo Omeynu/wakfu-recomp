@@ -3,7 +3,10 @@
 #include "../config.h"
 #include "present.h"
 #include "fsr1.h"
+#include "../png.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -57,8 +60,48 @@ struct State {
     VkDescriptorSet fsrSets[2] = {};
     VkSampler fsrSampler = VK_NULL_HANDLE;
     vk::Image fsr[2];
+    // Message de capture : cadre RGBA copié sur l'image de la chaîne d'échange (tampon visible du CPU, fait une fois)
+    VkBuffer texteBuf = VK_NULL_HANDLE;
+    VkDeviceMemory texteMem = VK_NULL_HANDLE;
+    uint32_t texteW = 0, texteH = 0, texteEchelle = 0;
 };
 State* g = nullptr;
+std::atomic<int64_t> g_annonceFin{0};   // fin d'affichage du message de capture (steady_clock, ns)
+
+int64_t MaintenantNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// Cadre « Capture effectuée » (français) ou « Screenshot saved » à l'échelle `e`, dans un tampon visible du CPU.
+bool EnsureTexte(uint32_t e) {
+    if (g->texteBuf && g->texteEchelle == e) return true;
+    VkDevice dev = g->ctx->device;
+    if (g->texteBuf) vkDestroyBuffer(dev, g->texteBuf, nullptr), vkFreeMemory(dev, g->texteMem, nullptr);
+    g->texteBuf = VK_NULL_HANDLE, g->texteMem = VK_NULL_HANDLE, g->texteEchelle = 0;
+    const bool fr = config::LangueXbox(config::g.langue, config::LangueSysteme()) == 4;
+    const std::vector<uint8_t> rgba = TexteRgba(fr ? "Capture effectu\xc3\xa9" "e" : "Screenshot saved", e, &g->texteW, &g->texteH);
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = rgba.size();
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    if (vkCreateBuffer(dev, &bi, nullptr, &g->texteBuf) != VK_SUCCESS) return false;
+    VkMemoryRequirements mr;
+    vkGetBufferMemoryRequirements(dev, g->texteBuf, &mr);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    ai.allocationSize = mr.size;
+    ai.memoryTypeIndex = g->ctx->FindMemory(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* p = nullptr;
+    if (ai.memoryTypeIndex == UINT32_MAX || vkAllocateMemory(dev, &ai, nullptr, &g->texteMem) != VK_SUCCESS ||
+        vkBindBufferMemory(dev, g->texteBuf, g->texteMem, 0) != VK_SUCCESS || vkMapMemory(dev, g->texteMem, 0, bi.size, 0, &p) != VK_SUCCESS) {
+        if (g->texteMem) vkFreeMemory(dev, g->texteMem, nullptr);
+        vkDestroyBuffer(dev, g->texteBuf, nullptr);
+        g->texteBuf = VK_NULL_HANDLE, g->texteMem = VK_NULL_HANDLE;
+        return false;
+    }
+    memcpy(p, rgba.data(), rgba.size());
+    vkUnmapMemory(dev, g->texteMem);
+    g->texteEchelle = e;
+    return true;
+}
 
 // GLSL (calcul) -> SPIR-V (glslang)
 bool CompileGlsl(const char* source, std::vector<uint32_t>* spirv, std::string* log) {
@@ -432,6 +475,8 @@ bool PresentInit(vk::Context* ctx, VkSurfaceKHR surface, std::string* error) {
 
 void PresentResize() { if (g) g->stale = true; }
 
+void AnnoncerCapture() { g_annonceFin = MaintenantNs() + 2000000000LL; }
+
 void PresentFrameImage(VkImage native, uint32_t w, uint32_t h, uint32_t drawableW, uint32_t drawableH) {
     if (!g || !w || !h) return;
     WaitFrame();
@@ -532,6 +577,20 @@ void PresentFrameImage(VkImage native, uint32_t w, uint32_t h, uint32_t drawable
     blit.dstOffsets[0] = {x0, y0, 0};
     blit.dstOffsets[1] = {x0 + int32_t(dw), y0 + int32_t(dh), 1};
     vkCmdBlitImage(cmd, blitSrc, blitLayout, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    const uint32_t e = std::max<uint32_t>(1, g->extent.height / 360);   // 3 en 1080p
+    const bool annonce = MaintenantNs() < g_annonceFin.load();
+    const bool texte = annonce && EnsureTexte(e);
+    static bool dit = false;   // échec signalé une fois par message
+    if (annonce && !texte && !dit) fprintf(stderr, "[capture] message « Capture effectuée » impossible (tampon)\n");
+    dit = annonce;
+    if (texte && g->texteW + 8 * e <= g->extent.width && g->texteH + 8 * e <= g->extent.height) {
+        vk::Context::Transition(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkBufferImageCopy c{};
+        c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        c.imageOffset = {int32_t(8 * e), int32_t(8 * e), 0};
+        c.imageExtent = {g->texteW, g->texteH, 1};
+        vkCmdCopyBufferToImage(cmd, g->texteBuf, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+    }
     vk::Context::Transition(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     vkEndCommandBuffer(cmd);
 

@@ -5,6 +5,7 @@
 // natif/tampons ; textures : résultats des resolves natifs (VueResolue), sinon cache natif (natif/textures, N1), sinon texture vide. Fil natif, sauf ShaderCree.
 #define XXH_INLINE_ALL
 #include <xxhash.h>
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
@@ -18,6 +19,7 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+#include "config.h"
 #include "gpu/vk.h"
 #include "guest.h"
 #include "platform.h"
@@ -57,6 +59,7 @@ struct Courant {
     uint32_t indicesQuads = 0;   // liste de quads : nombre d'indices de triangles générés (c.ib, 32 bits)
 };
 
+struct Declaration { std::vector<uint8_t> octets; ::natif::VertexLayout l; };
 struct Etat {
     Context* vk = nullptr;
     bool essaye = false, pret = false;
@@ -71,13 +74,24 @@ struct Etat {
     uint32_t slot = 0, image = UINT32_MAX;
     std::unordered_map<uint64_t, VkSampler> echantillonneurs;
     // derniers blocs écrits dans le lot (réutilisés tant que rien ne change)
-    const void* constantes = nullptr;
+    uint64_t serieConstantes[2]{};   // instantanés VS, PS déjà écrits dans le lot (adrVs, adrPs)
     VkDeviceAddress adrVs = 0, adrPs = 0, adrPartage = 0;
     uint8_t partage[288]{};
     VkImageView vues[kEchantillonneurs]{};
     VkSampler ech[kEchantillonneurs]{};
     VkDescriptorSet jeux[2]{};
+    // liés dans le tampon de commandes du lot (non réémis s'ils ne changent pas ; remis à zéro à chaque lot)
+    VkDescriptorSet jeuxLies[2]{};
+    VkDeviceAddress pushLie[3]{};
+    VkBuffer vbLie[16]{}, ibLie = VK_NULL_HANDLE;
+    VkDeviceSize vbOffLie[16]{}, ibOffLie = 0;
+    VkIndexType ibTypeLie = VK_INDEX_TYPE_MAX_ENUM;
+    // vue et échantillonneur de chaque registre au draw précédent, valables dans le lot tant que constante de lecture,
+    // époque des textures et version des resolves ne changent pas (ech nul : à recalculer)
+    struct { uint32_t f[6]; bool texture, secours; VkImageView vue; VkSampler ech; } memo[kEchantillonneurs]{};
+    uint32_t memoEpoque = 0, memoVersion = 0;
     std::unordered_map<uint64_t, std::unique_ptr<Entree>> entrees;
+    std::unordered_map<uint32_t, Declaration> declarations;   // objet déclaration invité -> disposition
     Courant courant;
 } e;
 
@@ -217,19 +231,28 @@ VkSampler Echantillonneur(const uint32_t* f) {
     sc.addressModeV = mode(cy);
     sc.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sc.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
-    // mips (N1) : POINT, LINEAR, BASEMAP (niveau 0 seul) ; shortcut: lod_bias et anisotropie ignorés
+    // mips (N1) : POINT, LINEAR, BASEMAP (niveau 0 seul) ; shortcut: lod_bias et anisotropie du jeu ignorés
     sc.mipmapMode = mip == 1 ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
     sc.maxLod = mip == 2 ? 0.0f : VK_LOD_CLAMP_NONE;
+    // option [video] filtrage_anisotrope (échantillonneurs filtrés seulement), plafonnée par le GPU
+    if (config::g.anisotropy > 1 && e.vk->maxAnisotropy >= 1 && min != 0) {
+        sc.anisotropyEnable = VK_TRUE;
+        sc.maxAnisotropy = std::min(float(config::g.anisotropy), e.vk->maxAnisotropy);
+    }
     if (vkCreateSampler(e.vk->device, &sc, nullptr, &s) != VK_SUCCESS) s = VK_NULL_HANDLE;
     return s;
 }
 
 int Lier(VkCommandBuffer cmd, VkPipelineLayout disposition, const Instantane& d) {
+    Basculer(kConstantes);
     // Constantes float VS c0-c255 et PS c0-c255 (4 096 o chacune), partagées tant que l'instantané ne change pas
-    if (d.constantes.get() != e.constantes || !e.adrVs || !e.adrPs) {
-        e.adrVs = Ecrire(d.constantes->data(), 4096);
-        e.adrPs = Ecrire(d.constantes->data() + 1024, 4096);
-        e.constantes = d.constantes.get();
+    if (d.serieConstantes[0] != e.serieConstantes[0] || !e.adrVs) {
+        e.adrVs = Ecrire(d.constantes[0]->data(), 4096);
+        e.serieConstantes[0] = d.serieConstantes[0];
+    }
+    if (d.serieConstantes[1] != e.serieConstantes[1] || !e.adrPs) {
+        e.adrPs = Ecrire(d.constantes[1]->data(), 4096);
+        e.serieConstantes[1] = d.serieConstantes[1];
     }
     // Constantes partagées (docs/natif-b3-shaders.md §3) : échantillonneur s -> texture s, échantillonneur s
     uint8_t partage[288] = {};
@@ -244,28 +267,52 @@ int Lier(VkCommandBuffer cmd, VkPipelineLayout disposition, const Instantane& d)
     }
     if (!e.adrVs || !e.adrPs || !e.adrPartage) { e.adrVs = e.adrPartage = 0; return 2; }   // anneau plein
     const VkDeviceAddress push[3] = {e.adrVs, e.adrPs, e.adrPartage};
-    vkCmdPushConstants(cmd, disposition, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, push);
+    if (memcmp(push, e.pushLie, sizeof push)) {
+        vkCmdPushConstants(cmd, disposition, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof push, push);
+        memcpy(e.pushLie, push, sizeof push);
+    }
     // Textures : celles posées par SetTexture (dev+0x31F8) ; résultat du resolve natif si la mémoire en vient (shortcut:
     // une texture réécrite par le CPU après un resolve reste servie par l'image native, à suivre si cela arrive), sinon
     // cache natif, sinon texture vide (comptée « de secours »)
+    Basculer(kTextures);
     bool secours = false;
     const VkImageView vide = VueVide();
     VkImageView vues[kEchantillonneurs];
     VkSampler ech[kEchantillonneurs];
+    if (const uint32_t ep = EpoqueTextures(), ve = VersionTextures(); ep != e.memoEpoque || ve != e.memoVersion) {
+        for (auto& m : e.memo) m.ech = VK_NULL_HANDLE;
+        e.memoEpoque = ep;
+        e.memoVersion = ve;
+    }
     for (uint32_t s = 0; s < kEchantillonneurs; s++) {
         const uint32_t* f = d.fetch + 6 * s;
+        auto& m = e.memo[s];
+        if (m.ech && m.texture == (d.textures[s] != 0) && !memcmp(m.f, f, sizeof m.f)) {
+            vues[s] = m.vue;
+            ech[s] = m.ech;
+            secours |= m.secours;
+            continue;
+        }
+        bool sec = false;
         vues[s] = vide;
         if (d.textures[s]) {
             vues[s] = VueResolue(f[1]);
             if (!vues[s]) vues[s] = VueTexture(f);
             if (!vues[s]) {
                 vues[s] = vide;
-                secours = true;
+                sec = true;
             }
         }
         ech[s] = Echantillonneur(f);
         if (!vues[s] || !ech[s]) return 2;
+        secours |= sec;
+        memcpy(m.f, f, sizeof m.f);
+        m.texture = d.textures[s] != 0;
+        m.secours = sec;
+        m.vue = vues[s];
+        m.ech = ech[s];
     }
+    Basculer(kDescripteurs);
     if (!e.jeux[0] || memcmp(vues, e.vues, sizeof vues) || memcmp(ech, e.ech, sizeof ech)) {
         const VkDescriptorSetLayout l[2] = {e.ensembles[0], e.ensembles[3]};
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -290,8 +337,10 @@ int Lier(VkCommandBuffer cmd, VkPipelineLayout disposition, const Instantane& d)
         memcpy(e.vues, vues, sizeof vues);
         memcpy(e.ech, ech, sizeof ech);
     }
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, disposition, 0, 1, &e.jeux[0], 0, nullptr);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, disposition, 3, 1, &e.jeux[1], 0, nullptr);
+    if (e.jeux[0] != e.jeuxLies[0]) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, disposition, 0, 1, &e.jeux[0], 0, nullptr);
+    if (e.jeux[1] != e.jeuxLies[1]) vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, disposition, 3, 1, &e.jeux[1], 0, nullptr);
+    e.jeuxLies[0] = e.jeux[0];
+    e.jeuxLies[1] = e.jeux[1];
     return secours ? 1 : 0;
 }
 
@@ -310,13 +359,13 @@ int Emplacement(uint32_t usage, uint32_t index) {
     }
 }
 
-const Entree* EntreePour(::natif::VertexLayout&& l, const uint32_t pas[16]) {
+const Entree* EntreePour(const ::natif::VertexLayout& l, const uint32_t pas[16]) {
     uint64_t k = l.key;
     for (int s = 0; s < 16; s++) k = (k ^ pas[s]) * 1099511628211ull;
     std::unique_ptr<Entree>& en = e.entrees[k];
     if (en) return en.get();
     en = std::make_unique<Entree>();
-    en->l = std::move(l);
+    en->l = l;
     std::vector<VkVertexInputAttributeDescription> brut;
     ::natif::Describe(en->l, pas, &en->liaisons, &brut);
     uint32_t pris = 0;
@@ -347,23 +396,33 @@ void Dessiner(VkCommandBuffer cmd, const Instantane& d) {
         const bool zero = b.binding == c.e->liaisonZero;
         const VkBuffer buf = zero ? e.zero.buf : c.vb[b.binding].buffer;
         const VkDeviceSize off = zero ? 0 : c.vb[b.binding].offset;
+        if (buf == e.vbLie[b.binding] && off == e.vbOffLie[b.binding]) continue;
         vkCmdBindVertexBuffers(cmd, b.binding, 1, &buf, &off);
+        e.vbLie[b.binding] = buf;
+        e.vbOffLie[b.binding] = off;
     }
+    auto lierIndices = [&](VkCommandBuffer cmd) {
+        if (c.ib.buffer == e.ibLie && c.ib.offset == e.ibOffLie && c.typeIndices == e.ibTypeLie) return;
+        vkCmdBindIndexBuffer(cmd, c.ib.buffer, c.ib.offset, c.typeIndices);
+        e.ibLie = c.ib.buffer;
+        e.ibOffLie = c.ib.offset;
+        e.ibTypeLie = c.typeIndices;
+    };
     if (d.prim == 13) {   // indices générés par ObtenirSommets (début et base déjà appliqués)
         if (!c.indicesQuads) return;
-        vkCmdBindIndexBuffer(cmd, c.ib.buffer, c.ib.offset, c.typeIndices);
+        lierIndices(cmd);
         vkCmdDrawIndexed(cmd, c.indicesQuads, 1, 0, 0, 0);
         return;
     }
     switch (d.type) {
         case 0: vkCmdDraw(cmd, d.nombre, 1, d.debut, 0); break;
         case 1:
-            vkCmdBindIndexBuffer(cmd, c.ib.buffer, c.ib.offset, c.typeIndices);
+            lierIndices(cmd);
             vkCmdDrawIndexed(cmd, d.nombre, 1, d.debut, d.baseSommet, 0);
             break;
         case 2: vkCmdDraw(cmd, d.nombre, 1, 0, 0); break;
         default:
-            vkCmdBindIndexBuffer(cmd, c.ib.buffer, c.ib.offset, c.typeIndices);
+            lierIndices(cmd);
             vkCmdDrawIndexed(cmd, d.nombre, 1, 0, 0, 0);
     }
 }
@@ -473,9 +532,14 @@ void NouveauLot(uint32_t slot, uint32_t image) {
     e.image = image;
     e.slot = slot & 1;
     e.pos[e.slot] = 0;
-    e.constantes = nullptr;
     e.adrVs = e.adrPs = e.adrPartage = 0;
     e.jeux[0] = e.jeux[1] = VK_NULL_HANDLE;
+    e.jeuxLies[0] = e.jeuxLies[1] = VK_NULL_HANDLE;
+    memset(e.pushLie, 0, sizeof e.pushLie);
+    memset(e.vbLie, 0, sizeof e.vbLie);
+    e.ibLie = VK_NULL_HANDLE;
+    e.ibTypeLie = VK_INDEX_TYPE_MAX_ENUM;
+    for (auto& m : e.memo) m.ech = VK_NULL_HANDLE;
     if (e.pools[e.slot]) vkResetDescriptorPool(e.vk->device, e.pools[e.slot], 0);
 }
 
@@ -512,7 +576,15 @@ bool ObtenirShaders(const Instantane& d, ShadersNatifs* out) {
 
 bool ObtenirSommets(const Instantane& d, SommetsNatifs* out) {
     if (!d.declaration) { out->echec = 1; return false; }
-    ::natif::VertexLayout l = ::natif::FromDecl(d.declaration);
+    // Déclaration lue une fois par objet, revalidée par ses octets (objet libéré puis adresse réutilisée)
+    const uint32_t nb = std::min<uint32_t>(Ld32(d.declaration + 0x18), 64);
+    const uint8_t* el = Host(d.declaration + 0x34);
+    Declaration& dc = e.declarations[d.declaration];
+    if (dc.octets.size() != nb * 12u || memcmp(dc.octets.data(), el, nb * 12u)) {
+        dc.octets.assign(el, el + nb * 12u);
+        dc.l = ::natif::FromElements(el, nb);
+    }
+    const ::natif::VertexLayout& l = dc.l;
     if (l.attrs.empty()) { out->echec = 1; return false; }
     const bool up = d.type >= 2;
     const float cible[2] = {float(out->cible.width), float(out->cible.height)};
@@ -579,7 +651,7 @@ bool ObtenirSommets(const Instantane& d, SommetsNatifs* out) {
         c.typeIndices = VK_INDEX_TYPE_UINT32;
         c.indicesQuads = uint32_t(tri.size());
     }
-    c.e = EntreePour(std::move(l), pas);
+    c.e = EntreePour(l, pas);
     out->echec = 0;
     out->entree = &c.e->info;
     out->cle = c.e->l.key ^ uint64_t(c.e->liaisons.size()) << 56;

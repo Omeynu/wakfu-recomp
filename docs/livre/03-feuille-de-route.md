@@ -5,18 +5,18 @@
 Dans l'ordre prévu. Une option nouvelle reste désactivée par défaut tant qu'elle n'est pas validée, et doit tenir
 60 images/s.
 
-1. **En cours** : cadence sous Windows (minuteur), CPU des portables, rendu en **1440p** (définition interne x1 à x4).
-   Fini quand le journal d'un joueur Windows montre 60 images/s tenues au 99e centile, puis le 1440p à 60 sur la
-   RX 6700 (mesuré sur le travail de chaque image).
-   Fait (v0.1.3, 23/11) : 60 img/s en grande zone sous Windows, et les trois morceaux courts du point 7
-   (installateur sans fenêtre, `journal.log`, niveau 2 de RecompLauncher), mode portable supprimé.
-2. **Options rapides** : filtrage anisotrope, son coupé hors de la fenêtre, zone morte des sticks, intensité des
-   vibrations, touche de capture d'écran, choix de l'écran et position de la fenêtre mémorisée, copie de secours des
-   sauvegardes.
-3. **Image** : niveaux de MSAA (2x, 4x, 8x), ombres en plus haute définition, puis les préréglages
-   (Économie / Équilibré / Qualité), qui en dépendent.
-4. **Vérifications dans le jeu** : coopération locale à deux manettes (attribution des joueurs), langues des voix,
-   effets plein écran à désactiver, canaux audio.
+1. *Fait (v0.1.3 et v0.1.4)* : cadence sous Windows (minuteur), CPU des portables (fil de rendu -32 % par image en
+   grande zone), rendu en **1440p** (définition interne x1 à x4 ; 1440p à 60 images/s au 99e centile sur la RX 6700).
+   Aussi en v0.1.3 : les trois morceaux courts du point 7 (installateur sans fenêtre, `journal.log`, niveau 2 de
+   RecompLauncher), mode portable supprimé.
+2. *Fait (v0.1.4)* : **options rapides** : filtrage anisotrope, son coupé hors de la fenêtre, zone morte des sticks,
+   intensité des vibrations, touche de capture d'écran, choix de l'écran et position de la fenêtre mémorisée, copie
+   de secours des sauvegardes.
+3. *Fait (v0.1.4)* : **image** : niveaux de MSAA (2x, 4x, 8x), ombres en plus haute définition, préréglages
+   (Économie / Équilibré / Qualité).
+4. *Fait (v0.1.4)* : **vérifications dans le jeu** : la coopération locale ne marchait pas (joueur 2 jamais connecté),
+   réparée avec l'attribution des joueurs ; une seule langue de voix ; pas de flou de mouvement ni de profondeur de
+   champ à désactiver ; le jeu ne produit que de la stéréo (détail dans `docs/options.md`, « Vérifié dans le jeu »).
 5. **Options longues** : remappage de la manette, affichage des performances en jeu, notifications de succès,
    anticrénelage de la transparence, icônes de manette Xbox/PlayStation, filtre pour daltoniens.
 6. **Fin de projet** : son surround 5.1/7.1, **plus de 60 images/s** (essai seulement : mesurer, abandonner si la

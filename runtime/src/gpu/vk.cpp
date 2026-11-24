@@ -93,6 +93,8 @@ bool Context::Init(std::string* error) {
     vkGetPhysicalDeviceProperties(physical, &props);
     deviceName = props.deviceName;
     deviceType = int(props.deviceType);
+    sampleCounts = props.limits.framebufferColorSampleCounts & props.limits.framebufferDepthSampleCounts &
+                   props.limits.framebufferStencilSampleCounts;
     timestampPeriod = props.limits.timestampComputeAndGraphics ? props.limits.timestampPeriod : 0.0f;
 
     uint32_t qn = 0;
@@ -139,6 +141,8 @@ bool Context::Init(std::string* error) {
     vkGetPhysicalDeviceFeatures(physical, &supported);
     f2.features.textureCompressionBC = supported.textureCompressionBC;
     bc = supported.textureCompressionBC;
+    f2.features.samplerAnisotropy = supported.samplerAnisotropy;   // option filtrage_anisotrope
+    maxAnisotropy = supported.samplerAnisotropy ? props.limits.maxSamplerAnisotropy : 0;
     // Shaders natifs (B3, XenosRecomp) : constantes par adresse de tampon, tableaux de descripteurs sans borne
     VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     {

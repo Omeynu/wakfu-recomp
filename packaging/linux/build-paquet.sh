@@ -77,6 +77,7 @@ cmake -S "$REPO/tools-src/wakfu-installer" -B "$BLD/stub" -G Ninja -DCMAKE_BUILD
 ninja -C "$BLD/stub" >> "$BLD/stub.log"
 "$BLD/stub/test_suppression" "$(mktemp -d -p "$BLD")"
 "$BLD/stub/test_migration" "$(mktemp -d -p "$BLD")"
+"$BLD/stub/test_secours" "$(mktemp -d -p "$BLD")"
 for l in "$BLD/imgui/LICENSE.txt:imgui" "$BLD/inter/LICENSE.txt:Inter-OFL-1.1" "$BLD/zstd-src/LICENSE:zstd"; do
     mkdir -p "$ST/licences"; cp "${l%%:*}" "$ST/licences/${l##*:}.txt"
 done

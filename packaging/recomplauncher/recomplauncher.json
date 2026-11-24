@@ -79,10 +79,22 @@
       "defaults": { "video/largeur": "1280", "video/hauteur": "720" }
     },
     {
+      "id": "internal_resolution",
+      "group": "Display",
+      "label": "Internal resolution",
+      "help": "Resolution the game is drawn at. 1440p needs a dedicated graphics card (about 3 times the GPU work of 720p).",
+      "choices": [
+        { "label": "720p (original)", "set": { "video/echelle_rendu": "1" } },
+        { "label": "1440p", "set": { "video/echelle_rendu": "2" } },
+        { "label": "2160p", "set": { "video/echelle_rendu": "3" } }
+      ],
+      "defaults": { "video/echelle_rendu": "1" }
+    },
+    {
       "id": "upscaler",
       "group": "Display",
       "label": "Upscaling",
-      "help": "The game draws at 720p. FSR 1 makes it sharper in 1440p or 4K and works on any card.",
+      "help": "Scales the image to the window. FSR 1 makes 720p sharper in 1440p or 4K and works on any card.",
       "choices": [
         { "label": "Linear", "set": { "post/agrandissement": "\"lineaire\"" } },
         { "label": "FSR 1", "set": { "post/agrandissement": "\"fsr1\"" } }
@@ -93,10 +105,12 @@
       "id": "msaa",
       "group": "Display",
       "label": "Anti-aliasing (MSAA)",
-      "help": "Auto turns it on with a dedicated graphics card. Off is about 20% faster on the GPU.",
+      "help": "Auto uses 4x with a dedicated graphics card. Off is about 20% faster on the GPU; 8x is the slowest.",
       "choices": [
         { "label": "Auto", "set": { "video/multi_echantillonnage": "\"auto\"" } },
-        { "label": "On", "set": { "video/multi_echantillonnage": "\"active\"" } },
+        { "label": "2x", "set": { "video/multi_echantillonnage": "\"2x\"" } },
+        { "label": "4x", "set": { "video/multi_echantillonnage": "\"4x\"" } },
+        { "label": "8x", "set": { "video/multi_echantillonnage": "\"8x\"" } },
         { "label": "Off", "set": { "video/multi_echantillonnage": "\"desactive\"" } }
       ],
       "defaults": { "video/multi_echantillonnage": "\"auto\"" }

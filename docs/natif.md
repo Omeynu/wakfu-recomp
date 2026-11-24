@@ -2,7 +2,8 @@
 
 > **Depuis N7 (branche n7) : rendu natif seul, émulation PM4 retirée.** Les sections B1 à N6 décrivent l'état d'alors :
 > `WAKFU_NATIF`, `WAKFU_NATIF_CAPTURE`, `WAKFU_NATIF_TEX(_OMBRE)`, `WAKFU_NATIF_TEXTURES`, les lignes `[rendu N]` /
-> `[image N]` et les options `echelle_rendu` / `filtrage_anisotrope` n'existent plus (section « N7 » en fin de fichier).
+> `[image N]` et l'option `filtrage_anisotrope` n'existent plus (section « N7 » en fin de fichier ; `echelle_rendu`, retirée en N7, revient en N10 :
+> définition interne native).
 
 D3D9 Xbox 360 de l'XDK 2.0.20353, lié statiquement, sans symboles. Analyse statique (désassemblage + C++ généré),
 détail et preuves dans trois fichiers :
@@ -264,4 +265,74 @@ parfois à ~6 img/s, son haché partout, pas de `journal.txt` sous Linux sans `c
   2,7 -> 2,2 ms sur RX 6700, bords un peu différents. Règle et choix du GPU partagés jeu/lanceur
   (`config::ChoisirGpu`, `config::MsaaActif`, testés dans `unit_config`) ; le lanceur énumère les GPU Vulkan
   (chargeur ouvert à l'exécution) et écrit `[gpu] vu/retenu` dans `journal-lanceur.txt`.
+- O2 (24/11) : niveaux `2x` / `4x` / `8x` (`config::MsaaEchantillons`), plafonnés par
+  `framebufferColor/Depth/StencilSampleCounts` (`vk::Context::sampleCounts`) ; le niveau choisi remplace celui demandé
+  par le jeu sur les surfaces EDRAM qui en demandent un. Coûts : `docs/options.md`.
+- O2 (24/11) : option `ombres` (x2, x4) : la surface 512x512 couleur sans MSAA (masque d'ombres) est créée à
+  `echelle_rendu` x ombres ; son resolve et sa texture suivent (échelle de la source). Sa passe garde la profondeur
+  1280x720 attachée sans s'en servir : une profondeur d'une autre échelle que la couleur n'est plus attachée
+  (`passeSansDs`), sinon la passe serait limitée à la taille de la profondeur.
 
+
+## N10 : définition interne `[video] echelle_rendu` (23/11, branche n10)
+
+Option `echelle_rendu` = 1 (défaut, 1280x720, inchangé) à 4 (5120x2880) ; lanceur : Affichage > Définition du rendu.
+Le jeu garde ses tailles invitées ; les images natives sont s fois plus grandes (`natif/device.cpp`, `ImageNative::echelle`) :
+surfaces EDRAM, textures de rendu et destinations de resolve ; rectangles de resolve/effacement, point de destination,
+viewport, ciseaux et sommets en pixels (VTE) mis à l'échelle de la passe (aides dans `etats.h`, `unit_natif_etats`).
+Toutes les cibles suivent l'échelle, y compris les 256x256 (taches de lumière de la zone 1, plus nettes qu'en 720p) :
+choix de l'utilisateur du 23/11 (d'abord gardées à x1 pour rester proches du 720p). Compatible avec les ajouts de v0.1.3 (surfaces
+de tuilage agrandies ensemble au resolve, resolves en bandes fusionnés, échange d'images, MSAA) : l'agrandissement des
+surfaces de bandes suit l'échelle de la source.
+
+Mesures RX 6700 XT, Linux (RADV), 2 parties chacune, GPU = travail par image (`[natif N] par image`) :
+
+| | zone 1 (≈ 500 draws) | grande zone (sauvegarde du joueur, ≈ 1000 draws) |
+|---|---|---|
+| natif (référence, x1) | 60 img/s, p99 16,8 ms, GPU 2,71 ms | 60 img/s, p99 16,8 ms, GPU 4,20 ms |
+| x1 | 60 img/s, p99 16,8 ms, GPU 2,72 ms | 60 img/s, p99 16,8 ms, GPU 4,23 ms |
+| x2 (2560x1440) | 60 img/s, p99 16,8 ms, GPU 6,55 ms | 60 img/s, p99 16,8 ms, GPU 6,19 ms |
+| x3 (3840x2160) | 60 img/s, p99 16,8 ms, GPU 9,6-11,9 ms | 60 img/s mais p99 19,1 ms (16-18 % d'images > 17,2 ms), GPU 11,4 ms |
+
+x2 tient 60 img/s avec ~10 ms de marge GPU ; l'objectif de 4 ms GPU à x2 n'est pas atteint (passes ×2,2, resolves ×3,2 :
+copies plein écran 4 fois plus grandes). x3 ne tient pas le p99 en grande zone. Wine (wakfu.exe compilé par
+l'installateur, lancé par `jouer.cmd`), grande zone : x1 et x2 à 60 img/s, p99 18,3-18,4 ms aux deux échelles
+(écart propre à Wine, pas à l'échelle), GPU 4,16 / 5,79 ms.
+
+Captures x2 réduites à 720p (`perf/comparer-natif.py`) contre x1, zone 1 et grande zone : écart moyen 0,2-2,6/255
+(4,8/255 sur une image où la boîte de dialogue est en plein fondu). Les écarts regardés sont : bords plus fins
+(feuillages, cordes, personnages : détail des textures visible à x2), éléments animés et fondus (feuilles, créatures,
+boîte de dialogue : même numéro d'image, moment du jeu différent), et la dernière ligne/colonne que le jeu ne couvre
+pas (1 px noir à x1, 1/2 px à x2). Pas d'écart de rendu (élément manquant, décalage, bande) trouvé.
+Wine : les 5 shaders D3DX ne sont traduits que si `jouer.cmd` passe les outils ; un conteneur déjà déposé par une partie
+lancée sans `jouer.cmd` n'est plus retraduit en jeu (le lanceur le fait au lancement suivant).
+
+### N8 — CPU du fil natif (23/11, branche n8b-cpu)
+Mesure : sauvegarde du joueur (grande zone, 1100-1340 draws natifs/image, ~980 draws D3D), RX 6700, Linux, images
+3000-4600 (27 lignes `[natif N]` par partie), 2 parties par variante en alternance ; « CPU » = temps CPU du fil natif
+(`ThreadCpuMs`), postes = répartition `Basculer` (10 images sur 60, attentes à part). Écart entre deux parties du même
+binaire ≈ 0,1-0,3 ms : seul ce qui gagne sur les deux parties est gardé.
+
+| Étape (commit) | poste visé (ms/image) | CPU fil natif | fil du jeu (crochets) |
+|---|---|---|---|
+| départ (fusion de natif) | — | 6,0-6,4 ms | 1,62 µs/draw |
+| déclaration de sommets lue une fois par objet (7f2f052) | sommets 1,41 -> 0,72 | 5,4-5,5 | = |
+| vue + échantillonneur repris du draw précédent par registre (74c699e) | textures 1,21 -> 0,26 | 4,6-4,7 | = |
+| pipeline, état dynamique, push constants, descripteurs, VB/IB non réémis (4c0321b) | commandes 0,85 -> 0,53 | 4,3-4,5 | = |
+| file prise par paquets, réveil sur file vide (cb1c2e3) | file 0,87 -> 0,62 | 4,3-4,4 | 1,84 -> 1,70 µs/draw |
+| constantes VS/PS séparées et numérotées (533fae5) | constantes 1,23 -> 0,62 | 4,24 | = |
+
+Bilan (parties longues, images 3000-5300) : CPU du fil natif 6,34 -> 4,32 ms/image (-32 %), 60 img/s des deux côtés.
+Écartés (pas de gain mesuré) : réveil sur file vide seul (avant les paquets) ; comparaison octet à octet des moitiés
+de constantes au fil natif (memcmp plus cher que la copie). « Tampons statiques reconvertis » : aucun en grande zone
+(0 conversion par image une fois chargée). Les constantes sont reconnues par un numéro d'instantané et non plus
+par leur adresse : une adresse libérée puis reprise par un nouvel instantané pouvait faire sauter leur écriture.
+Compteur « textures natives » de `[natif N]` : appels réels à VueResolue (les registres repris ne recomptent pas).
+Captures (image 5000) : écart final/départ du même ordre qu'entre deux parties du départ (0,59 % contre 0,52 % de
+pixels > 8/255, feuilles qui tombent). Reste par image : file 1,1 (libération des instantanés, 1,5 Ko + constantes, sur
+le fil natif : prochaine piste = recyclage des instantanés, aussi côté jeu), sommets 0,7, constantes 0,6, commandes 0,5.
+Non mesuré sur le portable (Ryzen 7 5700U) : gain relatif attendu du même ordre.
+Vérifié : batterie RAPIDE (j1, j4-radv, j5-partie, unitaires, options : OK ; unit_xma non construit dans ce dossier
+de build sans FFmpeg) ; Wine (wakfu.exe recompilé dans une copie de l'installation, jouer.cmd, grande zone) : rendu
+complet (0 draw ignoré), CPU du fil natif 4,25 ms/image, 60 img/s hors chargement (écran de chargement 30-55 img/s,
+comme sous Linux et avant).

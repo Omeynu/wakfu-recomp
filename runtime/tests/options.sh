@@ -1,6 +1,6 @@
 #!/bin/sh
 # Options du joueur (config.toml) vérifiables sans fenêtre : création au premier lancement (valeurs par défaut),
-# relecture, choix du GPU par son nom, logos sautés, valeur invalide signalée et ignorée.
+# relecture, choix du GPU par son nom, logos sautés, valeur invalide signalée et ignorée, définition interne x2.
 # Options de fenêtre (si Xvfb est installé, sinon sautées avec un message) : fenêtre 800x600, vsync (présentation FIFO)
 # et limite à 10 img/s (300 images en 28 s au moins) sous un serveur X virtuel, rendu lavapipe.
 # Usage : options.sh <wakfu> <image.bin> <xex patché> <jeu de base> <tu2> <données> [journal]
@@ -20,6 +20,14 @@ grep -q '^\[rendu\] Vulkan : llvmpipe' "${log%.log}-2.log" || { echo "ÉCHEC : G
 logos=$(grep -c '^\[config\] logo sauté' "${log%.log}-2.log")
 [ "$logos" -eq 2 ] || { echo "ÉCHEC : $logos logo(s) sauté(s) au lieu de 2"; fail=1; }
 grep -q '^\[config\] \[audio\] volume : valeur invalide' "${log%.log}-2.log" || { echo "ÉCHEC : volume invalide non signalé"; fail=1; }
+# Définition interne x2 : image présentée (capture) en 2560x1440, non uniforme
+printf '[video]\nechelle_rendu = 2\n' > "$data/config.toml"
+cap="${log%.log}-echelle"; rm -rf "$cap"
+WAKFU_RENDER=1 WAKFU_STOP_AT_SWAP=900 WAKFU_CAPTURE=900 WAKFU_CAPTURE_DIR="$cap" timeout 600 "$exe" "$image" "$xex" "$base" "$tu" "$data" \
+    > "${log%.log}-4.log" 2>&1 || { echo "ÉCHEC : lancement à l'échelle 2 (code $?)"; fail=1; }
+grep -q '^\[natif\] rendu natif .*définition interne x2' "${log%.log}-4.log" || { echo "ÉCHEC : échelle 2 non appliquée"; fail=1; }
+[ "$(od -An -tu1 -j16 -N8 "$cap/image_900.png" 2>/dev/null | tr -s ' ')" = " 0 0 10 0 0 0 5 160" ] || { echo "ÉCHEC : capture à l'échelle 2 absente ou pas en 2560x1440"; fail=1; }
+[ "$(wc -c < "$cap/image_900.png" 2>/dev/null || echo 0)" -gt 100000 ] || { echo "ÉCHEC : capture à l'échelle 2 uniforme"; fail=1; }
 if command -v Xvfb > /dev/null; then
     printf '[video]\nlargeur = 800\nhauteur = 600\nvsync = true\nlimite_images = 10\ngpu = "llvmpipe"\n' > "$data/config.toml"
     Xvfb :97 -screen 0 1920x1080x24 > /dev/null 2>&1 & xvfb=$!

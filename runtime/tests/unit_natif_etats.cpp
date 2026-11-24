@@ -22,6 +22,15 @@ int main() {
     VERIFIE(FormatCible(0x12) == VK_FORMAT_UNDEFINED);               // DXT1 : pas une cible
     VERIFIE(Echantillons(0) == VK_SAMPLE_COUNT_1_BIT && Echantillons(2) == VK_SAMPLE_COUNT_4_BIT);
 
+    // Définition interne x2 : rectangle de resolve d'une bande de tuilage, viewport, point de destination
+    int32_t rect[4] = {320, 0, 640, 720};
+    AgrandirRect(rect, 2);
+    VERIFIE(rect[0] == 640 && rect[1] == 0 && rect[2] == 1280 && rect[3] == 1440);
+    float vp[6] = {0.5f, 0, 1280, 720, 0, 1};
+    AgrandirViewport(vp, 2);
+    VERIFIE(vp[0] == 1 && vp[2] == 2560 && vp[3] == 1440 && vp[4] == 0 && vp[5] == 1);
+    VERIFIE(PointX(256u << 16 | 128, 2) == 512 && PointY(256u << 16 | 128, 2) == 256 && PointY(0xFFFF, 1) == 0xFFFF);
+
     // Défauts D3D : ZENABLE, ZWRITEENABLE, ZFUNC LESSEQUAL ; pas de mélange ; masque 0xF ; pas de culling
     RegsEtat r;
     r.depthControl = 0x36;

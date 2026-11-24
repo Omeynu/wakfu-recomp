@@ -73,7 +73,9 @@ struct Context {
     std::string deviceName;
     bool validation = false;
     bool bc = false;                    // textureCompressionBC activée (textures DXT natives)
-    int deviceType = 0;                 // VkPhysicalDeviceType (config::MsaaActif)
+    float maxAnisotropy = 0;            // samplerAnisotropy activée : plafond du GPU (0 : non prise en charge)
+    int deviceType = 0;                 // VkPhysicalDeviceType (config::MsaaEchantillons)
+    VkSampleCountFlags sampleCounts = VK_SAMPLE_COUNT_1_BIT;   // MSAA possible sur les cibles couleur et profondeur
     float timestampPeriod = 0;
     uint64_t timestampMask = ~0ull;     // bits valides des horodatages de la file graphique          // ns par tic d'horodatage (0 : horodatages non pris en charge)
     bool swapchain = false;             // VK_KHR_swapchain activée (présentation dans une fenêtre)

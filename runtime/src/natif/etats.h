@@ -45,4 +45,12 @@ VkSampleCountFlagBits Echantillons(uint32_t d3dmultisample);   // NONE 0, 2_SAMP
 // Convention : repère D3D (viewport de hauteur négative, ou positive avec Y inversé par le VS : même sens des faces).
 EtatPipeline TraduireEtat(const RegsEtat& r, bool avecProfondeur);
 
+// Définition interne ×s (option echelle_rendu) : le jeu garde ses tailles invitées, les images natives (cibles EDRAM et
+// destinations de resolve) sont s fois plus grandes ; rectangles (x0, y0, x1, y1) et viewport (x, y, l, h) suivent.
+inline void AgrandirRect(int32_t r[4], uint32_t s) { for (int i = 0; i < 4; i++) r[i] *= int32_t(s); }
+inline void AgrandirViewport(float v[6], uint32_t s) { for (int i = 0; i < 4; i++) v[i] *= float(s); }   // profondeurs inchangées
+// Point de destination d'un resolve (x << 16 | y, 16 bits chacun) en pixels natifs.
+inline int32_t PointX(uint32_t xy, uint32_t s) { return int32_t(xy >> 16) * int32_t(s); }
+inline int32_t PointY(uint32_t xy, uint32_t s) { return int32_t(xy & 0xFFFF) * int32_t(s); }
+
 }  // namespace wk::natif

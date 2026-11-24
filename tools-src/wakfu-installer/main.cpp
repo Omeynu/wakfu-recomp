@@ -713,10 +713,10 @@ wk::config::Config journalGpu(const fs::path& data)
     bool trouve = true;
     const int i = wk::config::ChoisirGpu(gpus, c.gpu, &trouve);
     if (i < 0) { say("[gpu] aucun GPU Vulkan 1.3 détecté\n"); return c; }
-    const bool msaa = wk::config::MsaaActif(c.msaa, gpus[i].type);
+    const int msaa = wk::config::MsaaEchantillons(c.msaa, gpus[i].type);
     say("[gpu] retenu : %s (%s, %s) ; multi-échantillonnage %s (%s)\n", gpus[i].nom.c_str(), type(gpus[i].type),
         c.gpu.empty() ? "choix automatique" : trouve ? "option gpu" : "option gpu introuvable, choix automatique",
-        msaa ? "activé" : "désactivé",
+        msaa ? ("x" + std::to_string(msaa) + " (plafonné par le GPU)").c_str() : "désactivé",
         c.msaa != "auto" ? "choix du joueur" : gpus[i].type == 2 ? "auto : GPU dédié" : "auto : pas de GPU dédié");
     return c;
 }
@@ -741,6 +741,12 @@ int launchGame(const Install& in)
     setenv("DXC_LIB", (N / "dxc" / "lib").c_str(), 1);
     setenv("WAKFU_JOURNAL", "1", 1);   // stderr du jeu vers <données>/journal.log (runtime, DetachConsole)
 #endif
+    try   // copie de secours des sauvegardes (5 dernières) ; un échec n'empêche pas de jouer
+    {
+        const std::string n = copieSecours(data);
+        if (!n.empty()) say("Copie de secours des sauvegardes : %s\n", u8(data / "sauvegardes-secours" / n).c_str());
+    }
+    catch (const std::exception& e) { say("Copie de secours des sauvegardes impossible : %s\n", e.what()); }
     say("Lancement : %s (données et journal : %s)\n", u8(exe(D / "wakfu")).c_str(), u8(data).c_str());
     return runProcess({ w(exe(D / "wakfu")), w(g / "patched" / "image.bin"), w(g / "patched" / "default.xex"),
                         w(g / "base"), w(g / "tu2"), w(data) }, D, true, !console);

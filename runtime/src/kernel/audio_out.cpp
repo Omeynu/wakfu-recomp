@@ -1,6 +1,7 @@
 // Sortie son (voir audio_out.h).
 #include "../config.h"
 #include "audio_out.h"
+#include "window.h"
 #include <cstdio>
 #include <algorithm>
 #include <cstring>
@@ -87,8 +88,9 @@ bool Open() {
 void Submit(const float* mix) {
     if (!g_device) return;
     float stereo[2 * kFrameSamples];
-    // option [audio] volume ; somme des clients bornée à [-1, 1]
-    for (int i = 0; i < 2 * kFrameSamples; i++) stereo[i] = std::clamp(mix[i] * config::g.volume, -1.0f, 1.0f);
+    // options [audio] volume et couper_hors_focus (le mixage continue : pas de dérive des vidéos) ; somme bornée à [-1, 1]
+    const float volume = config::g.muteUnfocused && !window::Focused() ? 0.0f : config::g.volume;
+    for (int i = 0; i < 2 * kFrameSamples; i++) stereo[i] = std::clamp(mix[i] * volume, -1.0f, 1.0f);
     std::lock_guard<std::mutex> l(g_mutex);
     g_file.insert(g_file.end(), stereo, stereo + 2 * kFrameSamples);
     g_demarre = true;

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include "../quit.h"
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -58,12 +59,14 @@ WK_IMPORT(XNotifyGetNext) { WK_TRACE(XNotifyGetNext); Ret(ctx, 0); }       // au
 WK_IMPORT(XNotifyPositionUI) { WK_TRACE(XNotifyPositionUI); }
 
 // ---------- Utilisateurs ----------
-WK_IMPORT(XamUserGetSigninState) { WK_TRACE(XamUserGetSigninState); Ret(ctx, ctx.r3.u32 == 0 ? 1 : 0); }  // 1 = local
+// Joueur 2 (utilisateur 1) connecté, profil local « Joueur 2 », tant que ses commandes sont branchées (coopératif)
+namespace { bool Connected(uint32_t user); }
+WK_IMPORT(XamUserGetSigninState) { WK_TRACE(XamUserGetSigninState); Ret(ctx, Connected(ctx.r3.u32) ? 1 : 0); }  // 1 = local
 WK_IMPORT(XamUserGetXUID) {
     WK_TRACE(XamUserGetXUID);
     // (utilisateur, masque, XUID*)
-    if (ctx.r3.u32 != 0) { Ret(ctx, ERROR_NO_SUCH_USER); return; }
-    St64(ctx.r5.u32, kXuid);
+    if (!Connected(ctx.r3.u32)) { Ret(ctx, ERROR_NO_SUCH_USER); return; }
+    St64(ctx.r5.u32, kXuid + ctx.r3.u32);
     Ret(ctx, ERROR_SUCCESS);
 }
 WK_IMPORT(XamUserGetSigninInfo) {
@@ -71,18 +74,18 @@ WK_IMPORT(XamUserGetSigninInfo) {
     // (utilisateur, drapeaux, X_USER_SIGNIN_INFO*) : xuid, ?, état, ?, ?, nom[16]
     const uint32_t out = ctx.r5.u32;
     for (uint32_t i = 0; i < 0x28; i += 4) St32(out + i, 0);
-    if (ctx.r3.u32 != 0) { Ret(ctx, ERROR_NO_SUCH_USER); return; }
-    St64(out, kXuid);
+    if (!Connected(ctx.r3.u32)) { Ret(ctx, ERROR_NO_SUCH_USER); return; }
+    St64(out, kXuid + ctx.r3.u32);
     St32(out + 0x0C, 1);
-    memcpy(Host(out + 0x18), "Joueur", 6);
+    memcpy(Host(out + 0x18), ctx.r3.u32 ? "Joueur 2" : "Joueur", ctx.r3.u32 ? 8 : 6);
     Ret(ctx, ERROR_SUCCESS);
 }
 
-// ---------- Entrées : manette 0 toujours branchée (script, manette SDL ou clavier de la fenêtre) ----------
+// ---------- Entrées : joueur 1 toujours branché, joueur 2 selon [entrees] joueur2 (script, manette SDL ou clavier) ----------
 WK_IMPORT(XamInputGetCapabilities) {
     WK_TRACE(XamInputGetCapabilities);
     // (utilisateur, drapeaux, X_INPUT_CAPABILITIES*) : type, sous-type, drapeaux, manette (12), vibration (4)
-    if (ctx.r3.u32 != 0) { Ret(ctx, ERROR_DEVICE_NOT_CONNECTED); return; }
+    if (!Connected(ctx.r3.u32)) { Ret(ctx, ERROR_DEVICE_NOT_CONNECTED); return; }
     const uint32_t c = ctx.r5.u32;
     for (uint32_t i = 0; i < 0x14; i += 4) St32(c + i, 0);
     St8(c, 1); St8(c + 1, 1);
@@ -94,13 +97,13 @@ WK_IMPORT(XamInputGetCapabilities) {
 }
 // Entrées scriptées pour les tests : WAKFU_INPUT="3:START,6:A,9:LUP/2.5" (secondes depuis le démarrage :
 // bouton maintenu 150 ms, ou la durée donnée après « / »). Boutons : UP DOWN LEFT RIGHT START BACK LB RB A B X Y ;
-// stick gauche poussé à fond : LUP LDOWN LLEFT LRIGHT.
+// stick gauche poussé à fond : LUP LDOWN LLEFT LRIGHT. WAKFU_INPUT2 : même forme pour le joueur 2 (branché s'il est défini).
 namespace {
 struct Press { double t, d; uint32_t mask; };
 constexpr uint32_t kLUp = 1u << 16, kLDown = 1u << 17, kLLeft = 1u << 18, kLRight = 1u << 19;
-std::vector<Press> LoadScript() {
+std::vector<Press> LoadScript(const char* var) {
     std::vector<Press> out;
-    const char* e = getenv("WAKFU_INPUT");
+    const char* e = getenv(var);
     if (!e) return out;
     static const struct { const char* n; uint32_t m; } kNames[] = {
         {"UP", 0x1}, {"DOWN", 0x2}, {"LEFT", 0x4}, {"RIGHT", 0x8}, {"START", 0x10}, {"BACK", 0x20},
@@ -124,12 +127,13 @@ std::vector<Press> LoadScript() {
     }
     return out;
 }
-const std::vector<Press> g_script = LoadScript();
+const std::vector<Press> g_scripts[2] = {LoadScript("WAKFU_INPUT"), LoadScript("WAKFU_INPUT2")};
+const bool g_script2 = getenv("WAKFU_INPUT2") && *getenv("WAKFU_INPUT2");
 const auto g_start = std::chrono::steady_clock::now();
-window::Pad ScriptedPad() {
+window::Pad ScriptedPad(int joueur) {
     const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - g_start).count();
     uint32_t m = 0;
-    for (auto& p : g_script)
+    for (auto& p : g_scripts[joueur])
         if (t >= p.t && t < p.t + p.d) m |= p.mask;
     window::Pad pad;
     pad.buttons = uint16_t(m);
@@ -137,10 +141,12 @@ window::Pad ScriptedPad() {
     pad.lx = (m & kLRight) ? 32767 : (m & kLLeft) ? -32768 : 0;
     return pad;
 }
+// Joueurs 1 et 2 (utilisateurs 0 et 1) ; le joueur 1 est toujours branché.
+bool Connected(uint32_t user) { return user == 0 || (user == 1 && (g_script2 || window::PadPresent(1))); }
 // Script d'entrées prioritaire pendant ses appuis, sinon manette SDL / clavier de la fenêtre.
-window::Pad CurrentPad() {
-    if (window::Pad p = ScriptedPad(); !(p == window::Pad{})) return p;
-    return window::PadState();
+window::Pad CurrentPad(int joueur) {
+    if (window::Pad p = ScriptedPad(joueur); !(p == window::Pad{})) return p;
+    return window::PadState(joueur);
 }
 // Boutons + directions des sticks et gâchettes (pour les frappes, comme XInput)
 uint32_t KeystrokeMask(const window::Pad& p) {
@@ -163,20 +169,21 @@ uint32_t KeystrokeMask(const window::Pad& p) {
 WK_IMPORT(XamInputGetState) {
     WK_TRACE(XamInputGetState);
     // (utilisateur, drapeaux, X_INPUT_STATE*) : numéro de paquet, boutons, gâchettes, sticks
-    if (ctx.r3.u32 != 0) { Ret(ctx, ERROR_DEVICE_NOT_CONNECTED); return; }
+    const uint32_t u = ctx.r3.u32;
+    if (!Connected(u)) { Ret(ctx, ERROR_DEVICE_NOT_CONNECTED); return; }
     static std::mutex m;
-    static window::Pad last;
-    static uint32_t packet = 0;
-    const window::Pad p = CurrentPad();
+    static window::Pad last[2];
+    static uint32_t packet[2] = {};
+    const window::Pad p = CurrentPad(u);
     uint32_t number;
     {
         std::lock_guard<std::mutex> lock(m);
-        if (!(p == last)) {
-            packet++;
-            if (p.buttons && p.buttons != last.buttons) fprintf(stderr, "[entrée] boutons %04X\n", p.buttons);
-            last = p;
+        if (!(p == last[u])) {
+            packet[u]++;
+            if (p.buttons && p.buttons != last[u].buttons) fprintf(stderr, "[entrée] joueur %u boutons %04X\n", u + 1, p.buttons);
+            last[u] = p;
         }
-        number = packet;
+        number = packet[u];
     }
     const uint32_t s = ctx.r5.u32;
     St32(s, number);
@@ -188,8 +195,8 @@ WK_IMPORT(XamInputGetState) {
 // (utilisateur, inutilisé, XINPUT_VIBRATION* : moteurs gauche et droit sur 16 bits)
 WK_IMPORT(XamInputSetState) {
     WK_TRACE(XamInputSetState);
-    if (ctx.r3.u32 != 0) { Ret(ctx, ERROR_DEVICE_NOT_CONNECTED); return; }
-    if (ctx.r5.u32) window::Rumble(Ld16(ctx.r5.u32), Ld16(ctx.r5.u32 + 2));
+    if (!Connected(ctx.r3.u32)) { Ret(ctx, ERROR_DEVICE_NOT_CONNECTED); return; }
+    if (ctx.r5.u32) window::Rumble(int(ctx.r3.u32), Ld16(ctx.r5.u32), Ld16(ctx.r5.u32 + 2));
     Ret(ctx, ERROR_SUCCESS);
 }
 WK_IMPORT(XamInputGetKeystrokeEx) {
@@ -203,25 +210,31 @@ WK_IMPORT(XamInputGetKeystrokeEx) {
         {0x40, 0x5816}, {0x80, 0x5817},
         {1u << 18, 0x5820}, {1u << 19, 0x5821}, {1u << 20, 0x5822}, {1u << 21, 0x5823},
         {1u << 22, 0x5830}, {1u << 23, 0x5831}, {1u << 24, 0x5832}, {1u << 25, 0x5833}};
+    // *r3 : utilisateur demandé (0xFF ou drapeau XINPUT_FLAG_ANYUSER 0x40000000 de r4 : n'importe lequel),
+    // remplacé par celui de la frappe
     static std::mutex m;
-    static std::deque<std::pair<uint16_t, uint16_t>> queue;   // (touche, drapeaux)
-    static uint32_t last = 0;
+    static std::deque<std::pair<uint16_t, uint16_t>> queue[2];   // par joueur : (touche, drapeaux)
+    static uint32_t last[2] = {};
     std::lock_guard<std::mutex> lock(m);
-    const uint32_t now = KeystrokeMask(CurrentPad());
-    if (now != last) {
+    const uint32_t want = !ctx.r3.u32 || (ctx.r4.u32 & 0x40000000) ? 0xFF : Ld32(ctx.r3.u32);
+    for (uint32_t u = 0; u < 2; u++) {
+        const uint32_t now = Connected(u) ? KeystrokeMask(CurrentPad(u)) : 0;
+        if (now == last[u]) continue;
         for (auto& k : kVk) {
-            if ((now & k.mask) && !(last & k.mask)) queue.push_back({k.vk, 1});
-            if (!(now & k.mask) && (last & k.mask)) queue.push_back({k.vk, 2});
+            if ((now & k.mask) && !(last[u] & k.mask)) queue[u].push_back({k.vk, 1});
+            if (!(now & k.mask) && (last[u] & k.mask)) queue[u].push_back({k.vk, 2});
         }
-        last = now;
+        while (queue[u].size() > 32) queue[u].pop_front();   // joueur jamais lu par le jeu
+        last[u] = now;
     }
-    if (queue.empty()) { Ret(ctx, ERROR_EMPTY); return; }
-    auto [vk, flags] = queue.front();
-    queue.pop_front();
+    uint32_t u = want == 0xFF ? (queue[0].empty() ? 1 : 0) : want;
+    if (u > 1 || queue[u].empty()) { Ret(ctx, ERROR_EMPTY); return; }
+    auto [vk, flags] = queue[u].front();
+    queue[u].pop_front();
     const uint32_t out = ctx.r5.u32;
-    St16(out, vk); St16(out + 2, 0); St16(out + 4, flags); St8(out + 6, 0); St8(out + 7, 0);
-    if (ctx.r3.u32) St32(ctx.r3.u32, 0);
-    if (flags == 1) fprintf(stderr, "[entrée] touche %04X\n", vk);
+    St16(out, vk); St16(out + 2, 0); St16(out + 4, flags); St8(out + 6, uint8_t(u)); St8(out + 7, 0);
+    if (ctx.r3.u32) St32(ctx.r3.u32, u);
+    if (flags == 1) fprintf(stderr, "[entrée] joueur %u touche %04X\n", u + 1, vk);
     Ret(ctx, ERROR_SUCCESS);
 }
 
@@ -246,6 +259,7 @@ std::atomic<uint32_t> g_submits[4];   // trames reçues par client (bilan du jou
 std::mutex g_mixMutex;
 float g_mix[2 * audio::kFrameSamples];   // somme des trames du tour (stéréo)
 bool g_mixUsed = false;
+float g_crete[6] = {};   // crête par canal des trames du jeu (G D C BF AG AD) depuis le dernier bilan
 void StartAudioThread() {
     GuestThread* t = CreateGuestThread(0x10000);
     std::thread([t] {
@@ -293,11 +307,19 @@ void StartAudioThread() {
                 const xma::Bilan x = xma::Releve();
                 uint32_t s[4];
                 for (int i = 0; i < 4; i++) s[i] = g_submits[i].exchange(0);
+                float c[6];
+                {
+                    std::lock_guard<std::mutex> lock(g_mixMutex);
+                    std::copy(std::begin(g_crete), std::end(g_crete), c);
+                    std::fill(std::begin(g_crete), std::end(g_crete), 0.0f);
+                }
                 fprintf(stderr, "[son] 10 s : tours %u, trames par client %u/%u/%u/%u ; sortie : appels %u de %u éch., "
                         "sous-alimentations %u (%.0f ms de silence), file min %u trames ; fil : retard max %.1f ms, "
-                        "rappel du jeu max %.1f ms ; xma : décodages %u, sortie vide sans entrée %u\n",
+                        "rappel du jeu max %.1f ms ; xma : décodages %u, sortie vide sans entrée %u ; "
+                        "crête des 6 canaux du jeu G %.2f D %.2f C %.2f BF %.2f AG %.2f AD %.2f\n",
                         tours, s[0], s[1], s[2], s[3], b.appels, b.echantillonsParAppel, b.sousAlimentations,
-                        b.manquants / 48.0, fileMin == UINT32_MAX ? 0 : fileMin, retardMax, rappelMax, x.decodages, x.aVide);
+                        b.manquants / 48.0, fileMin == UINT32_MAX ? 0 : fileMin, retardMax, rappelMax, x.decodages, x.aVide,
+                        c[0], c[1], c[2], c[3], c[4], c[5]);
                 retardMax = rappelMax = 0;
                 fileMin = UINT32_MAX;
                 tours = 0;
@@ -330,6 +352,13 @@ WK_IMPORT(XAudioSubmitRenderDriverFrame) {
         audio::DownmixToStereo(Host(ctx.r4.u32), stereo);
         std::lock_guard<std::mutex> lock(g_mixMutex);
         for (int i = 0; i < 2 * audio::kFrameSamples; i++) g_mix[i] += stereo[i];
+        for (int i = 0; i < 6 * audio::kFrameSamples; i++)
+        {
+            const uint32_t b = Ld32(ctx.r4.u32 + 4 * i);
+            float f;
+            memcpy(&f, &b, 4);
+            g_crete[i / audio::kFrameSamples] = std::max(g_crete[i / audio::kFrameSamples], std::fabs(f));
+        }
         g_mixUsed = true;
     }
     Ret(ctx, 0);
@@ -468,8 +497,10 @@ WK_IMPORT(XamUserReadProfileSettings) {
     if (count < 1 || count > 32 || !sizePtr) { Ret(ctx, FinishXam(ov, 87)); return; }   // ERROR_INVALID_PARAMETER
     const uint32_t need = profile::ReadSize(count, ids), have = Ld32(sizePtr);
     if (!buf || have < need) { if (!have) St32(sizePtr, need); Ret(ctx, 122); return; }   // ERROR_INSUFFICIENT_BUFFER
-    if (!ctx.r6.u32 && ctx.r4.u32 != 0) { Ret(ctx, FinishXam(ov, ERROR_NO_SUCH_USER)); return; }
-    profile::Read(g_dataDir + "/profile", count, ids, buf, ctx.r4.u32, ctx.r6.u32 ? kXuid : 0);
+    if (!ctx.r6.u32 && !Connected(ctx.r4.u32)) { Ret(ctx, FinishXam(ov, ERROR_NO_SUCH_USER)); return; }
+    // joueur 2 : réglages à part (<données>/profile2), par numéro ou par son XUID
+    const uint32_t user = ctx.r6.u32 ? uint32_t(Ld64(ctx.r6.u32) == kXuid + 1) : ctx.r4.u32;
+    profile::Read(g_dataDir + (user ? "/profile2" : "/profile"), count, ids, buf, ctx.r4.u32, ctx.r6.u32 ? kXuid + user : 0);
     uint32_t known = 0;
     for (uint32_t i = 0; i < count; i++) known += Ld32(buf + 8 + 40 * i) != 0;
     fprintf(stderr, "[profil] lecture de %u réglage(s) (%u enregistré(s)), premier %08X\n", count, known, Ld32(ids));
@@ -479,9 +510,9 @@ WK_IMPORT(XamUserWriteProfileSettings) {
     WK_TRACE(XamUserWriteProfileSettings);
     // (titre, utilisateur, nb réglages, réglages, overlapped)
     const uint32_t count = ctx.r5.u32, settings = ctx.r6.u32, ov = ctx.r7.u32;
-    if (ctx.r4.u32 != 0) { Ret(ctx, FinishXam(ov, ERROR_NO_SUCH_USER)); return; }
+    if (!Connected(ctx.r4.u32)) { Ret(ctx, FinishXam(ov, ERROR_NO_SUCH_USER)); return; }
     if (count > 32 || (count && !settings)) { Ret(ctx, FinishXam(ov, 87)); return; }
-    const uint32_t n = profile::Write(g_dataDir + "/profile", count, settings);
+    const uint32_t n = profile::Write(g_dataDir + (ctx.r4.u32 ? "/profile2" : "/profile"), count, settings);
     fprintf(stderr, "[profil] écriture de %u/%u réglage(s), premier %08X\n", n, count, count ? Ld32(settings + 0x10) : 0);
     Ret(ctx, FinishXam(ov, n == count ? 0 : 0x1F));   // ERROR_GEN_FAILURE
 }

@@ -12,6 +12,8 @@ bool PresentInit(vk::Context* ctx, VkSurfaceKHR surface, std::string* error);
 // Image native (layout GENERAL, écrite par des lots soumis avant sur la même file) recopiée puis mise à l'échelle en
 // gardant ses proportions (bandes noires) dans la zone dessinable.
 void PresentFrameImage(VkImage image, uint32_t w, uint32_t h, uint32_t drawableW, uint32_t drawableH);
-void PresentResize();   // taille de la fenêtre changée : chaîne d'échange recréée à la prochaine image
+void PresentResize();
+// Capture écrite (touche_capture) : « Capture effectuée » affiché 2 s en haut à gauche de la fenêtre. Tout fil.
+void AnnoncerCapture();   // taille de la fenêtre changée : chaîne d'échange recréée à la prochaine image
 
 }  // namespace wk::gpu

@@ -457,6 +457,7 @@ void TexturesLot(uint32_t image) {
     if (image % 60 == 0 && (g_s.servies || g_s.envois)) Journal(image);
 }
 
+uint32_t EpoqueTextures() { return g_epoque.load(std::memory_order_acquire); }
 VkImageView VueTexture(const uint32_t f[6]) {
     Context* vk = Contexte();
     Disposition d;

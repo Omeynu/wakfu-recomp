@@ -54,6 +54,27 @@ int main() {
     Expect("U = stick gauche haut", p.ly, 32767);
     k2[SDL_SCANCODE_F] = 0; k2[SDL_SCANCODE_U] = 0; k2[SDL_SCANCODE_ESCAPE] = 1;
     Expect("B inchangé (Échap)", MapPad(zero, 0, k2).buttons, 0x2000);
+    // Zone morte (option zone_morte) : 0 = inchangé ; 0,2 : petit mouvement -> repos, plein -> plein, 0,6 -> 0,5
+    int16_t s[6] = {};
+    s[SDL_CONTROLLER_AXIS_LEFTX] = 5000;
+    s[SDL_CONTROLLER_AXIS_LEFTY] = -3000;
+    s[SDL_CONTROLLER_AXIS_RIGHTX] = -32768;
+    p = MapPad(s, 0, nullptr, 0.0f);
+    Expect("zone 0 : lx inchangé", p.lx, 5000);
+    Expect("zone 0 : ly inchangé", p.ly, 3000);
+    Expect("zone 0 : rx inchangé", p.rx, -32768);
+    p = MapPad(s, 0, nullptr, 0.2f);
+    Expect("zone 0,2 : lx repos", p.lx, 0);
+    Expect("zone 0,2 : ly repos", p.ly, 0);
+    Expect("zone 0,2 : rx plein", p.rx, -32768);
+    s[SDL_CONTROLLER_AXIS_LEFTX] = 19660;   // 0,6
+    s[SDL_CONTROLLER_AXIS_LEFTY] = 0;
+    p = MapPad(s, 0, nullptr, 0.2f);
+    Expect("zone 0,2 : 0,6 -> 0,5", p.lx, 16383);
+    s[SDL_CONTROLLER_AXIS_LEFTX] = s[SDL_CONTROLLER_AXIS_LEFTY] = 32767;   // diagonale : direction gardée, bornée
+    p = MapPad(s, 0, nullptr, 0.5f);
+    Expect("zone 0,5 : diagonale x", p.lx, 32767);
+    Expect("zone 0,5 : diagonale y", p.ly, -32768);
     if (g_fail) return 1;
     printf("unit_pad : OK\n");
     return 0;

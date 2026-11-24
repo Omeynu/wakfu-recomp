@@ -1,12 +1,16 @@
-## What's new in v0.1.3
+## What's new in v0.1.4
 
-- **Windows: smooth 60 fps in busy areas** (1 ms timers; frames were missed in large zones, 31-48 fps before).
-- **Grougal is drawn in full** (render targets split in bands are now enlarged together).
-- **No console window while playing**; the game log is `journal.log` (next to your saves).
-- **RecompLauncher**: settings on the game's page, no console during setup, progress bar, setup log.
-- **Icons**: WakfuRecomp has its own icon; the game window uses the icon of your copy of the game.
-- **Portable mode removed**: an old portable folder's saves and settings are copied once to the normal data folder
-  (nothing is replaced or deleted). The game is prepared again on first start.
+- **Local co-op works**: a second controller (or keyboard + controller) can now join. Before, player 2's START did
+  nothing. Choose who uses what in Settings > Sound and controller (up to 4 controllers); player 2 has its own profile.
+- **1440p**: new *Internal resolution* setting (720p, 1440p, 2160p). 1440p holds 60 fps on a mid-range card.
+- **Graphics presets** in the launcher: Economy (laptops), Balanced, Quality (1440p, MSAA 4x); MSAA 2x/4x/8x,
+  anisotropic filtering up to 16x and sharper shadows can also be set one by one.
+- **Lighter on the CPU**: the renderer's thread uses about 30% less CPU per frame in busy areas (helps laptops).
+- **New options**: mute when the window is in the background, stick dead zone, rumble strength, screenshot key
+  (F12, saved in `captures`, with a "Screenshot saved" message for 2 s), screen choice and window position remembered.
+- **Save backups**: a copy of your saves is made at each start (last 5 kept) and can be restored from the launcher.
+- Your `config.toml` is never reset to defaults: a file with an invalid value is kept, and copied to
+  `config.toml.bak` before the launcher rewrites it.
 
 **No game files are included.** You need your own copy of Islands of Wakfu (XBLA, title `584109AA`) and its title update 2.
 

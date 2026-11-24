@@ -4,7 +4,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#include <algorithm>
 #include <cctype>
+#include <ctime>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -174,6 +176,100 @@ int64_t migrerPortable(const fs::path& ancien, const fs::path& data)
     std::ofstream o(fait);   // témoin écrit seulement après une copie complète (sinon refaite au lancement suivant)
     if (!o.flush()) throw Error("écriture impossible : " + u8(fait));
     return n;
+}
+
+namespace {
+bool nomSecours(const std::string& n)   // AAAA-MM-JJ_HH-MM-SS
+{
+    const char* f = "dddd-dd-dd_dd-dd-dd";
+    if (n.size() != std::strlen(f)) return false;
+    for (size_t i = 0; i < n.size(); ++i)
+        if (f[i] == 'd' ? !std::isdigit(uint8_t(n[i])) : n[i] != f[i]) return false;
+    return true;
+}
+// Copie de src dans dst (dossiers créés, fichiers remplacés), liens et jonctions ni suivis ni copiés
+void copierArbre(const fs::path& src, const fs::path& dst)
+{
+    fs::create_directories(dst);
+    for (auto it = fs::recursive_directory_iterator(src); it != fs::recursive_directory_iterator(); ++it)
+    {
+        const fs::path d = dst / it->path().lexically_relative(src);
+        if (estLien(it->path())) it.disable_recursion_pending();
+        else if (it->is_directory()) fs::create_directories(d);
+        else if (it->is_regular_file()) fs::copy_file(it->path(), d, fs::copy_options::overwrite_existing);
+    }
+}
+const char* const kSauvegardes[] = { "content", "profile", "profile2" };   // sauvegardes du jeu, profils joueurs 1 et 2 (runtime : files.cpp, xam.cpp)
+} // namespace
+
+std::vector<std::string> copiesSecours(const fs::path& data)
+{
+    std::vector<std::string> r;
+    std::error_code ec;
+    const fs::path s = data / "sauvegardes-secours";
+    if (estLien(s) || !fs::is_directory(s, ec)) return r;
+    for (auto& e : fs::directory_iterator(s))
+        if (nomSecours(u8(e.path().filename())) && !estLien(e.path()) && e.is_directory()) r.push_back(u8(e.path().filename()));
+    std::sort(r.rbegin(), r.rend());
+    return r;
+}
+
+namespace {
+std::string copier(const fs::path& data, const std::string& nomVoulu)
+{
+    std::string nom = nomVoulu;
+    if (nom.empty())
+    {
+        char b[32];
+        const std::time_t t = std::time(nullptr);
+        std::strftime(b, sizeof b, "%Y-%m-%d_%H-%M-%S", std::localtime(&t));
+        nom = b;
+    }
+    if (!nomSecours(nom)) throw Error("nom de copie de secours invalide : " + nom);
+    std::error_code ec;
+    bool rien = true;
+    for (const char* d : kSauvegardes) rien &= estLien(data / d) || !fs::is_directory(data / d, ec) || fs::is_empty(data / d, ec);
+    if (rien) return "";
+    const fs::path s = data / "sauvegardes-secours", dst = s / nom, partiel = s / (nom + ".partiel");
+    if (estLien(s)) throw Error("lien refusé : " + u8(s));
+    if (!fs::exists(dst, ec))   // même seconde : copie déjà faite
+    {
+        if (fs::exists(fs::symlink_status(partiel))) supprimerDans(s, partiel);   // reste d'une copie interrompue (jamais listé ni compté)
+        for (const char* d : kSauvegardes)
+            if (!estLien(data / d) && fs::is_directory(data / d, ec)) copierArbre(data / d, partiel / d);
+        fs::rename(partiel, dst);
+    }
+    return nom;
+}
+void elaguer(const fs::path& data)   // 5 copies les plus récentes gardées
+{
+    const fs::path s = data / "sauvegardes-secours";
+    const std::vector<std::string> copies = copiesSecours(data);
+    for (size_t i = 5; i < copies.size(); ++i) supprimerDans(s, s / copies[i]);
+}
+} // namespace
+
+std::string copieSecours(const fs::path& data, const std::string& nom)
+{
+    const std::string r = copier(data, nom);
+    if (!r.empty()) elaguer(data);
+    return r;
+}
+
+void restaurerSecours(const fs::path& data, const std::string& nom)
+{
+    const std::vector<std::string> copies = copiesSecours(data);
+    if (std::find(copies.begin(), copies.end(), nom) == copies.end()) throw Error("copie de secours introuvable : " + nom);
+    const fs::path src = data / "sauvegardes-secours" / nom;
+    copier(data, "");   // état actuel gardé avant de le remplacer (élagage après : la copie restaurée reste lisible)
+    std::error_code ec;
+    for (const char* d : kSauvegardes)
+        if (!estLien(src / d) && fs::is_directory(src / d, ec))
+        {
+            if (estLien(data / d)) throw Error("lien refusé : " + u8(data / d));
+            copierArbre(src / d, data / d);
+        }
+    elaguer(data);
 }
 
 } // namespace wk

@@ -74,9 +74,11 @@ Settings, saves and logs are in `%APPDATA%\WakfuRecomp` (Windows) or `~/.local/s
 ## Features
 
 - Plays from boot to in-game: intro videos, menus, new game, first zone; save games and profile settings.
-- Native rendering: Direct3D calls are translated to Vulkan (no GPU emulation), MSAA, optional AMD FSR 1 upscaling.
+- Native rendering: Direct3D calls are translated to Vulkan (no GPU emulation); internal resolution up to 2160p,
+  MSAA 2x/4x/8x, anisotropic filtering, graphics presets, optional AMD FSR 1 upscaling.
 - Game language: French, English, German, Spanish, Italian, Japanese (or the system language).
-- Controllers through SDL2 (hot-plug, rumble) and a remappable keyboard.
+- Local co-op for two players (up to 4 controllers or keyboard); controllers through SDL2 (hot-plug, rumble) and a
+  remappable keyboard.
 - Windowed, borderless and fullscreen modes; GPU selection; frame rate counter; skippable intro logos.
   All settings in `config.toml` or the launcher window ([`docs/options.md`](docs/options.md), French).
 - One-file Windows installer and launcher that ships its own compiler toolchain: nothing else to install.

@@ -23,9 +23,10 @@ static Image g_tex;
 static VkCommandBuffer g_envoi = VK_NULL_HANDLE;
 // Fournis par device.cpp et textures.cpp dans le jeu : pas de resolve natif ici, toute texture lue est g_tex
 namespace wk::natif { vk::Context* Contexte() { return &g_c; } VkCommandBuffer CmdEnvoi() { return g_envoi; }
-VkImageView VueResolue(uint32_t) { return VK_NULL_HANDLE; }
+VkImageView VueResolue(uint32_t) { return VK_NULL_HANDLE; } Poste Basculer(Poste p) { return p; }
 VkImageView VueTexture(const uint32_t[6]) { return g_tex.view; }
 VkImageView VueVide() { return g_tex.view; } void TexturesLot(uint32_t) {}
+uint32_t VersionTextures() { return 0; } uint32_t EpoqueTextures() { return 0; }
 [[noreturn]] void RenduImpossible(const std::string& c) { printf("ÉCHEC rendu impossible : %s\n", c.c_str()); exit(1); } }
 
 static bool Charger(const std::string& f, uint32_t at) {
@@ -88,7 +89,8 @@ int main(int argc, char** argv) {
             d.regs.colorControl = alpha << 3;
             d.textures[0] = 1;
             d.viewport[2] = d.viewport[3] = 64; d.viewport[5] = 1;
-            d.constantes = std::make_shared<std::array<float, 2048>>();
+            d.constantes[0] = std::make_shared<std::array<float, 1024>>();
+            d.constantes[1] = std::make_shared<std::array<float, 1024>>();
             d.donneesUP.assign(72, 0);
             wk::natif::ShadersNatifs sh;
             wk::natif::SommetsNatifs so;

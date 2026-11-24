@@ -71,6 +71,15 @@ uint64_t tailleSansLiens(const fs::path& p);   // octets, liens non suivis
 // vide, son contenu est copié une fois dans data (témoin data/.portable-copie) : fichiers absents seulement, rien
 // n'est remplacé ni supprimé, liens non suivis. Renvoie le nombre de fichiers copiés, -1 si rien n'est à faire.
 int64_t migrerPortable(const fs::path& ancien, const fs::path& data);
+// Copies de secours des sauvegardes (suppression.cpp) : content et profile de data copiés dans
+// data/sauvegardes-secours/<nom>/ (nom : AAAA-MM-JJ_HH-MM-SS, date locale), liens non suivis ; puis seules les 5 copies
+// les plus récentes sont gardées (seuls les dossiers à ce format, dans sauvegardes-secours, sont supprimés).
+// Renvoie le nom de la copie, vide s'il n'y a rien à copier ; Error si la copie échoue (rien n'est alors supprimé).
+std::string copieSecours(const fs::path& data, const std::string& nom = "");
+std::vector<std::string> copiesSecours(const fs::path& data);   // noms, la plus récente d'abord
+// Restauration : copie de secours de l'état actuel, puis fichiers de la copie `nom` remis dans data (fichiers
+// remplacés ; ceux créés depuis sont gardés, rien n'est supprimé). Error si nom n'est pas une copie.
+void restaurerSecours(const fs::path& data, const std::string& nom);
 
 // Ménage après installation : C++ recompilé, imports générés, builds CMake, outils (sauf ceux des shaders natifs,
 // utilisés à chaque lancement). Renvoie les chemins supprimés.

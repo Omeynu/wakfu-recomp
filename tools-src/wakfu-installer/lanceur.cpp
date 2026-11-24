@@ -445,6 +445,9 @@ struct App
     std::atomic<int> codeJeu{ 0 };
     std::string messageJeu;
     bool confirmerRecompilation = false, confirmerQuitter = false, quitter = false;
+    bool confirmerRestauration = false;   // copies de secours des sauvegardes
+    std::vector<std::string> copies;
+    std::string copieChoisie, messageSecours;
     std::string fatale;
     double gb = -1;
     ImVec2 zoneMin[2], zoneMax[2];   // zones de dépôt « Jeu » et « Mise à jour » (coordonnées de la fenêtre)
@@ -551,9 +554,11 @@ struct App
         keyart = chargerImage(ren, base / "KeyArt.png");
     }
 
+    bool garderCopie = false;
     void chargerReglages()
     {
         c = cfg::Config();
+        garderCopie = false;
         std::ifstream f(data / "config.toml", std::ios::binary);
         if (!f) return;
         std::stringstream ss;
@@ -561,6 +566,7 @@ struct App
         std::vector<std::string> err;
         c = cfg::Parse(ss.str(), &err);
         for (auto& e : err) journal("[config] " + e);
+        garderCopie = !err.empty();   // fichier invalide : copié en .bak avant d'être réécrit aux valeurs lues
     }
 
     bool enregistrerReglages()
@@ -568,6 +574,18 @@ struct App
         erreurConfig.clear();
         fs::path p = data / "config.toml", tmp = data / "config.toml.tmp";
         std::error_code ec;
+        if (garderCopie)
+        {
+            fs::copy_file(p, data / "config.toml.bak", fs::copy_options::overwrite_existing, ec);
+            if (ec)
+            {
+                erreurConfig = fmt(tr(T_ErrEcritureConfig), (u8(data / "config.toml.bak") + " (" + ec.message() + ")").c_str());
+                journal(erreurConfig);
+                return false;
+            }
+            journal("config.toml invalide copié dans config.toml.bak");
+            garderCopie = false;
+        }
         {
             std::ofstream o(tmp, std::ios::binary | std::ios::trunc);
             o << cfg::Serialize(c);
@@ -607,6 +625,7 @@ struct App
         if (fil.joinable()) fil.join();
         SDL_ShowWindow(win);
         SDL_RaiseWindow(win);
+        chargerReglages();   // position et taille de la fenêtre écrites par le jeu à sa fermeture
         int rc = codeJeu;
         // Codes de sortie de wakfu.exe : 0 normal, 2 usage, 3 fichiers du jeu invalides, 4 mémoire, 5 erreur fatale, 6 plantage
         if (rc == 0) messageJeu.clear();
@@ -1131,6 +1150,17 @@ struct App
         colonnes();
         ligneReglage(tr(T_Mode), tr(T_ModeAide));
         liste<std::string>("##mode", &c.mode, { { "fenetre", tr(T_ModeFenetre) }, { "plein_ecran", tr(T_ModePleinEcran) }, { "sans_bordure", tr(T_ModeSansBordure) } });
+        ligneReglage(tr(T_Ecran), tr(T_EcranAide));
+        {
+            std::vector<std::pair<int, std::string>> t;
+            const int n = std::max(SDL_GetNumVideoDisplays(), c.screen + 1);
+            for (int i = 0; i < n; ++i)
+            {
+                const char* nom = SDL_GetDisplayName(i);
+                t.push_back({ i, fmt("%d : %s", i + 1, nom ? nom : "?") });
+            }
+            if (liste<int>("##ecran", &c.screen, t)) c.posX.reset(), c.posY.reset();   // autre écran : fenêtre centrée
+        }
         ligneReglage(tr(T_Taille), tr(T_TailleAide));
         {
             std::vector<std::pair<int, std::string>> t;
@@ -1162,6 +1192,8 @@ struct App
             std::snprintf(b, sizeof b, "%s", c.gpu.c_str());
             if (ImGui::InputTextWithHint("##gpu", tr(T_GpuAuto), b, sizeof b)) c.gpu = b;
         }
+        ligneReglage(tr(T_Echelle), tr(T_EchelleAide));
+        liste<int>("##echelle", &c.renderScale, { { 1, "1280x720" }, { 2, "2560x1440" }, { 3, "3840x2160" }, { 4, "5120x2880" } });
         ImGui::EndTable();
     }
 
@@ -1169,10 +1201,23 @@ struct App
     {
         if (!debutTable()) return;
         colonnes();
+        ligneReglage(tr(T_Prereglage), tr(T_PrereglageAide));
+        {
+            std::string p = cfg::Prereglage(c);   // déduit des réglages : tout changement à la main donne « personnalise »
+            std::vector<std::pair<std::string, std::string>> t = { { "auto", tr(T_MsaaAuto) }, { "economie", tr(T_Economie) },
+                { "equilibre", tr(T_Equilibre) }, { "qualite", tr(T_Qualite) } };
+            if (p == "personnalise") t.push_back({ p, tr(T_Personnalise) });
+            if (liste<std::string>("##prereglage", &p, t)) cfg::AppliquerPrereglage(p, &c);
+        }
         ligneReglage(tr(T_Anticrenelage), tr(T_AnticrenelageAide));
         liste<std::string>("##aa", &c.antiAliasing, { { "aucun", tr(T_AaAucun) }, { "fxaa", "FXAA" } });
         ligneReglage(tr(T_Msaa), tr(T_MsaaAide));
-        liste<std::string>("##msaa", &c.msaa, { { "auto", tr(T_MsaaAuto) }, { "active", tr(T_Active) }, { "desactive", tr(T_Desactive) } });
+        liste<std::string>("##msaa", &c.msaa, { { "auto", tr(T_MsaaAuto) }, { "desactive", tr(T_Desactive) }, { "2x", "x2" }, { "4x", "x4" }, { "8x", "x8" },
+            { "active", tr(T_Active) } });
+        ligneReglage(tr(T_Anisotrope), tr(T_AnisotropeAide));
+        liste<int>("##aniso", &c.anisotropy, { { 1, "x1" }, { 2, "x2" }, { 4, "x4" }, { 8, "x8" }, { 16, "x16" } });
+        ligneReglage(tr(T_Ombres), tr(T_OmbresAide));
+        liste<std::string>("##ombres", &c.ombres, { { "origine", tr(T_Origine) }, { "x2", "x2" }, { "x4", "x4" } });
         ligneReglage(tr(T_Agrandissement), tr(T_AgrandissementAide));
         liste<std::string>("##agr", &c.upscale, { { "lineaire", tr(T_AgrLineaire) }, { "fsr1", "AMD FSR 1" } });
         ligneReglage(tr(T_Nettete), tr(T_NetteteAide));
@@ -1193,12 +1238,41 @@ struct App
         ligneReglage(tr(T_Volume), tr(T_VolumeAide));
         int v = int(std::lround(c.volume * 100));
         if (ImGui::SliderInt("##vol", &v, 0, 100, "%d %%")) c.volume = v / 100.0f;
+        ligneReglage(tr(T_CouperFocus), tr(T_CouperFocusAide));
+        ImGui::Checkbox("##focus", &c.muteUnfocused);
         ligneReglage(tr(T_Vibrations), tr(T_VibrationsAide));
-        ImGui::Checkbox("##vib", &c.vibration);
+        {
+            int vib = int(std::lround(c.vibration * 100));
+            if (ImGui::SliderInt("##vib", &vib, 0, 100, "%d %%")) c.vibration = vib / 100.0f;
+        }
+        ligneReglage(tr(T_ZoneMorte), tr(T_ZoneMorteAide));
+        {
+            int z = int(std::lround(c.deadZone * 100));
+            if (ImGui::SliderInt("##zone", &z, 0, 50, "%d %%")) c.deadZone = z / 100.0f;
+        }
         ligneReglage(tr(T_ArrierePlan), tr(T_ArrierePlanAide));
         ImGui::Checkbox("##fond", &c.backgroundInput);
+        for (int j = 0; j < 2; ++j) {
+            ligneReglage(tr(j ? T_Joueur2 : T_Joueur1), tr(T_JoueursAide));
+            std::vector<std::pair<std::string, std::string>> t;
+            for (int n = 1; n <= 4; ++n) t.push_back({ std::to_string(n), fmt(tr(T_ManetteN), n) });
+            t.push_back({ "clavier", tr(T_OngletClavier) });
+            const std::string avant = c.joueurs[j];
+            if (liste<std::string>(j ? "##joueur2" : "##joueur1", &c.joueurs[j], t) && c.joueurs[j] == c.joueurs[1 - j])
+                c.joueurs[1 - j] = avant;   // même commande que l'autre joueur : échange
+        }
         ligneReglage(tr(T_PasserLogos), tr(T_PasserLogosAide));
         ImGui::Checkbox("##logos", &c.skipLogos);
+        ligneReglage(tr(T_ToucheCapture), tr(T_ToucheCaptureAide));
+        {
+            std::vector<std::pair<std::string, std::string>> t;
+            for (int i = 1; i <= 12; ++i) t.push_back({ fmt("F%d", i), fmt("F%d", i) });
+            t.push_back({ "PrintScreen", "PrintScreen" });
+            bool connue = false;
+            for (auto& x : t) connue |= x.first == c.captureKey;
+            if (!connue) t.insert(t.begin(), { c.captureKey, c.captureKey });   // touche écrite à la main dans config.toml
+            liste<std::string>("##capture", &c.captureKey, t);
+        }
         ligneReglage(tr(T_Langue), tr(T_LangueAide));
         liste<std::string>("##langue", &c.langue, { { "auto", tr(T_LangueAuto) }, { "fr", "Français" }, { "en", "English" },
             { "de", "Deutsch" }, { "es", "Español" }, { "it", "Italiano" }, { "ja", "Japanese" } });
@@ -1349,6 +1423,15 @@ struct App
         if (bouton(tr(T_Recompiler), false, ImVec2(bw, S(46)))) confirmerRecompilation = true;
         ImGui::Dummy(ImVec2(0, S(2)));
         if (bouton(tr(T_Desinstaller), false, ImVec2(S(320), S(40)))) preparerDesinstallation();
+        ImGui::Dummy(ImVec2(0, S(2)));
+        if (bouton(tr(T_Restaurer), false, ImVec2(S(320), S(40))))
+        {
+            copies = copiesSecours(data);
+            copieChoisie = copies.empty() ? "" : copies.front();
+            if (copies.empty()) messageSecours = tr(T_AucuneCopie);
+            else confirmerRestauration = true;
+        }
+        if (!messageSecours.empty()) texteDoux(messageSecours.c_str(), 14);
         ImGui::Dummy(ImVec2(0, S(26)));
         if (!aJour && messageJeu.empty()) { icone(Icone::Attention); texteCouleur(kJaune, tr(T_NouvelleVersion), nullptr, 15); }
         if (!messageJeu.empty())
@@ -1563,7 +1646,8 @@ struct App
         finCarte();
     }
 
-    bool popup(const char* id, const char* titreP, const char* texte, const char* oui, bool* ouvert, bool garder = false)
+    bool popup(const char* id, const char* titreP, const char* texte, const char* oui, bool* ouvert, bool garder = false,
+               const std::function<void()>& contenu = nullptr)
     {
         if (*ouvert) ImGui::OpenPopup(id);
         bool r = false;
@@ -1579,6 +1663,7 @@ struct App
             ImGui::TextWrapped("%s", texte);
             finPolice();
             if (garder) { ImGui::Dummy(ImVec2(0, S(8))); caseGarder(); }
+            if (contenu) { ImGui::Dummy(ImVec2(0, S(8))); contenu(); }
             ImGui::Dummy(ImVec2(0, S(18)));
             if (bouton(tr(T_Annuler), false, ImVec2(0, S(42)))) { *ouvert = false; ImGui::CloseCurrentPopup(); }
             float w = largeurBouton(oui) + S(24);
@@ -1616,6 +1701,25 @@ struct App
         }
         if (popup("recomp", tr(T_ConfirmRecompTitre), tr(T_ConfirmRecomp), tr(T_Recompiler), &confirmerRecompilation, true)) construire(true);
         if (popup("sauvegardes", tr(T_ConfirmSauvTitre), tr(T_ConfirmSauv), tr(T_Supprimer), &confirmerSauvegardes)) { effacerSauvegardes = true; listerDesinstallation(); }
+        if (popup("restaurer", tr(T_RestaurerTitre), tr(T_RestaurerConfirm), tr(T_RestaurerOui), &confirmerRestauration, false, [this] {
+                ImGui::SetNextItemWidth(-FLT_MIN);
+                std::vector<std::pair<std::string, std::string>> t;
+                for (auto& n : copies) t.push_back({ n, n.substr(0, 10) + "  " + n.substr(11, 2) + ":" + n.substr(14, 2) + ":" + n.substr(17, 2) });
+                liste<std::string>("##copie", &copieChoisie, t);
+            }))
+        {
+            try
+            {
+                restaurerSecours(data, copieChoisie);
+                messageSecours = fmt(tr(T_Restauree), copieChoisie.c_str());
+                journal("sauvegardes restaurées depuis " + u8(data / "sauvegardes-secours" / copieChoisie));
+            }
+            catch (const std::exception& e)
+            {
+                messageSecours = fmt(tr(T_ErrRestauration), e.what());
+                journal(messageSecours);
+            }
+        }
         if (popup("quitter", tr(T_QuitterTitre), tr(T_Quitter), tr(T_QuitterOui), &confirmerQuitter)) quitter = true;
         ImGui::End();
     }

@@ -22,7 +22,7 @@ enum Texte {
     // Réglages
     T_Reglages, T_OuvrirDossier, T_OngletAffichage, T_OngletImage, T_OngletSonManette, T_OngletClavier, T_Enregistrer, T_Defauts,
     T_Mode, T_ModeAide, T_ModeFenetre, T_ModePleinEcran, T_ModeSansBordure, T_Taille, T_TailleAide, T_Vsync, T_VsyncAide,
-    T_Limite, T_LimiteAide, T_Aucune, T_AfficherIps, T_AfficherIpsAide, T_Gpu, T_GpuAide, T_GpuAuto,
+    T_Limite, T_LimiteAide, T_Aucune, T_AfficherIps, T_AfficherIpsAide, T_Gpu, T_GpuAide, T_GpuAuto, T_Echelle, T_EchelleAide,
     T_Anticrenelage, T_AnticrenelageAide, T_AaAucun, T_Msaa, T_MsaaAide, T_MsaaAuto, T_Active, T_Desactive, T_Agrandissement, T_AgrandissementAide, T_AgrLineaire, T_Nettete, T_NetteteAide, T_Luminosite, T_LuminositeAide, T_Gamma, T_GammaAide,
     T_CouleurXbox, T_CouleurXboxAide, T_Volume, T_VolumeAide, T_Vibrations, T_VibrationsAide,
     T_ArrierePlan, T_ArrierePlanAide, T_PasserLogos, T_PasserLogosAide, T_Langue, T_LangueAide, T_LangueAuto, T_Console, T_ConsoleAide,
@@ -40,6 +40,13 @@ enum Texte {
     T_Desinstaller, T_DesinstTitre, T_DesinstIntro, T_DesinstSauvegardes, T_DesinstGarde, T_DesinstGardeSauv, T_ConfirmSauvTitre,
     T_ConfirmSauv, T_Supprimer, T_DesinstEnCours, T_DesinstFini, T_DesinstFiniDetail, T_ErrSuppression, T_AnciennesTitre,
     T_AnciennesIntro, T_PasMaintenant, T_TailleGo, T_DepTitre, T_DepPacman, T_DepAutre, T_Installer,
+    // Options O1
+    T_Anisotrope, T_AnisotropeAide, T_CouperFocus, T_CouperFocusAide, T_ZoneMorte, T_ZoneMorteAide, T_ToucheCapture, T_ToucheCaptureAide, T_Ecran, T_EcranAide,
+    T_Restaurer, T_RestaurerTitre, T_RestaurerConfirm, T_RestaurerOui, T_AucuneCopie, T_Restauree, T_ErrRestauration,
+    // Options O2
+    T_Ombres, T_OmbresAide, T_Origine, T_Prereglage, T_PrereglageAide, T_Economie, T_Equilibre, T_Qualite, T_Personnalise,
+    // Options O3
+    T_Joueur1, T_Joueur2, T_JoueursAide, T_ManetteN,
     NbTextes
 };
 

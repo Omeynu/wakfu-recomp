@@ -27,8 +27,10 @@ struct Instantane {
     uint32_t textures[26]{};     // dev+0x31F8+4n
     uint32_t fetch[192]{};       // constantes de lecture dev+0x480 (32 × 6 mots : textures et flux de sommets)
     uint32_t booleens[8]{}, entiers[32]{};   // dev+0x2780 (VS, PS) / dev+0x27A0 (VS, PS)
-    // Constantes float VS (0..1023) puis PS (1024..2047), petit-boutistes ; partagées entre draws tant que rien ne change.
-    std::shared_ptr<const std::array<float, 2048>> constantes;
+    // Constantes float VS puis PS (1024 chacune), petit-boutistes ; partagées entre draws tant que rien ne change.
+    // serieConstantes : numéro de l'instantané (change avec lui ; 0 : inconnu).
+    std::shared_ptr<const std::array<float, 1024>> constantes[2];
+    uint64_t serieConstantes[2]{};
     RegsEtat regs;
     float viewport[6]{};         // X, Y, W, H, MinZ, MaxZ (dev+12896)
     uint32_t vte = 0x43F;        // PA_CL_VTE_CNTL dev+0x294C (sans échelle X/Y : sommets déjà en pixels, ex. vidéo XMV)
@@ -69,7 +71,13 @@ bool ObtenirSommets(const Instantane& d, SommetsNatifs* out);
 // Vue de l'image native écrite par un resolve natif dans la texture dont `mot1` est le mot 1 de la constante de
 // lecture (adresse de base), nulle sinon (le draw prend alors le cache de textures natif).
 VkImageView VueResolue(uint32_t mot1);
+uint32_t VersionTextures();   // change à chaque resolve ou remplacement de texture native (résultats de VueResolue)
 VkCommandBuffer CmdEnvoi();   // commandes d'envoi du lot courant (hors passe), soumises avant celles des draws
+// Répartition du temps du fil natif par poste (ligne [natif N], images mesurées comme le GPU : 10 sur 60) : le temps
+// écoulé depuis la bascule précédente va au poste quitté ; rend ce poste (à rebasculer au retour).
+enum Poste : uint8_t { kAutres, kFile, kShaders, kSommets, kPipeline, kConstantes, kTextures, kDescripteurs, kCommandes,
+                       kPasses, kResolves, kEchange, kAttente, kPostes };
+Poste Basculer(Poste p);
 // Fourni par le raccord : appelé quand le cœur commence un lot `slot` (0/1, sa barrière attendue) de l'image `image`.
 void NouveauLot(uint32_t slot, uint32_t image);
 

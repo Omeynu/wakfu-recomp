@@ -81,4 +81,44 @@ bool PngVersIco(const std::string& png, const std::string& ico) {
     return bool(out.flush());
 }
 
+
+// Police 5x8 (ligne 8 : jambage du p) limitée aux messages affichés (« Capture effectuée », « Screenshot saved »)  : 8 lignes de 5 bits.
+namespace {
+struct Glyphe { uint32_t code; uint8_t l[8]; };
+constexpr Glyphe kPolice[] = {
+    {'C', {14, 17, 16, 16, 16, 17, 14}}, {'S', {15, 16, 16, 14, 1, 1, 30}}, {'a', {0, 0, 14, 1, 15, 17, 15}},
+    {'c', {0, 0, 14, 16, 16, 17, 14}},   {'d', {1, 1, 13, 19, 17, 17, 15}}, {'e', {0, 0, 14, 17, 31, 16, 14}},
+    {0xE9, {2, 4, 14, 17, 31, 16, 14}},  {'f', {6, 9, 8, 28, 8, 8, 8}},     {'h', {16, 16, 22, 25, 17, 17, 17}},
+    {'n', {0, 0, 22, 25, 17, 17, 17}},   {'o', {0, 0, 14, 17, 17, 17, 14}}, {'p', {0, 0, 30, 17, 17, 30, 16, 16}},
+    {'r', {0, 0, 22, 25, 16, 16, 16}},   {'s', {0, 0, 15, 16, 14, 1, 30}},  {'t', {8, 8, 28, 8, 8, 9, 6}},
+    {'u', {0, 0, 17, 17, 17, 19, 13}},   {'v', {0, 0, 17, 17, 17, 10, 4}},
+};
+}
+
+std::vector<uint8_t> TexteRgba(const std::string& utf8, uint32_t echelle, uint32_t* w, uint32_t* h) {
+    std::vector<uint32_t> codes;   // UTF-8 sur 1 ou 2 octets (latin) ; le reste devient une espace
+    for (size_t i = 0; i < utf8.size(); i++) {
+        const uint8_t c = uint8_t(utf8[i]);
+        if (c < 0x80) codes.push_back(c);
+        else if ((c & 0xE0) == 0xC0 && i + 1 < utf8.size()) codes.push_back((c & 0x1Fu) << 6 | (uint8_t(utf8[++i]) & 0x3Fu));
+        else codes.push_back(' ');
+    }
+    const uint32_t e = echelle ? echelle : 1, marge = 4 * e;
+    *w = uint32_t(codes.size()) * 6 * e - e + 2 * marge;
+    *h = 8 * e + 2 * marge;
+    std::vector<uint8_t> rgba(size_t(*w) * *h * 4);
+    for (size_t i = 0; i < rgba.size(); i += 4) rgba[i] = rgba[i + 1] = rgba[i + 2] = 24, rgba[i + 3] = 255;
+    for (size_t k = 0; k < codes.size(); k++) {
+        const Glyphe* g = nullptr;
+        for (const Glyphe& p : kPolice) if (p.code == codes[k]) g = &p;
+        if (!g) continue;
+        for (uint32_t y = 0; y < 8 * e; y++)
+            for (uint32_t x = 0; x < 5 * e; x++)
+                if (g->l[y / e] >> (4 - x / e) & 1) {
+                    uint8_t* p = &rgba[((size_t(marge) + y) * *w + marge + k * 6 * e + x) * 4];
+                    p[0] = p[1] = p[2] = 255;
+                }
+    }
+    return rgba;
+}
 }  // namespace wk

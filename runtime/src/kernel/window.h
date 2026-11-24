@@ -15,6 +15,9 @@ bool Wanted();
 // de la surface (avant l'initialisation du rendu).
 void Open();
 bool IsOpen();                              // fenêtre créée
+bool Focused();                             // fenêtre au premier plan (vrai sans fenêtre ; thread quelconque)
+bool CaptureDemandee();                     // touche de capture appuyée depuis le dernier appel (option touche_capture)
+void CaptureFaite();                        // capture écrite : message « Capture effectuée » affiché 2 s
 void Pump();                                // événements (au plus toutes les 4 ms) ; fermeture -> sortie
 void PresentNative(VkImage image, uint32_t w, uint32_t h);   // image native (fil natif) -> fenêtre
 
@@ -25,11 +28,16 @@ struct Pad {
     int16_t lx = 0, ly = 0, rx = 0, ry = 0;
     bool operator==(const Pad&) const = default;
 };
-Pad PadState();
-void Rumble(uint16_t left, uint16_t right);   // vibrations (option [entrees] vibrations)
+// Joueur 0 ou 1 (options [entrees] joueur1, joueur2). Le joueur 1 est toujours branché ; le joueur 2 l'est si sa
+// manette est branchée ou s'il a le clavier.
+Pad PadState(int joueur = 0);
+bool PadPresent(int joueur);
+void Rumble(int joueur, uint16_t left, uint16_t right);   // vibrations (option [entrees] vibrations)
 // Correspondance SDL -> XINPUT (pad_map.cpp) : axes SDL (gauche X/Y, droite X/Y, gâchettes G/D),
 // boutons SDL (bit i = SDL_CONTROLLER_BUTTON i), état du clavier par scancode SDL (nul : pas de clavier).
-Pad MapPad(const int16_t axes[6], uint32_t buttons, const uint8_t* keys);
+// zoneMorte (option [entrees] zone_morte, 0 à 0,5) : zone morte radiale des sticks de la manette, course restante
+// remise à l'échelle (0 : axes inchangés).
+Pad MapPad(const int16_t axes[6], uint32_t buttons, const uint8_t* keys, float zoneMorte = 0.0f);
 // Option [touches] : commande -> nom de touche SDL ; remplace les touches par défaut de la commande. Retourne le nombre
 // de commandes appliquées (touche inconnue : message, ignorée).
 int SetKeyBindings(const std::map<std::string, std::string>& bindings);
