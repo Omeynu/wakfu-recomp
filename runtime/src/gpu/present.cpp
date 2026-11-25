@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <vector>
 #include <glslang/Public/ResourceLimits.h>
 #include <glslang/Public/ShaderLang.h>
@@ -60,47 +61,67 @@ struct State {
     VkDescriptorSet fsrSets[2] = {};
     VkSampler fsrSampler = VK_NULL_HANDLE;
     vk::Image fsr[2];
-    // Message de capture : cadre RGBA copié sur l'image de la chaîne d'échange (tampon visible du CPU, fait une fois)
-    VkBuffer texteBuf = VK_NULL_HANDLE;
-    VkDeviceMemory texteMem = VK_NULL_HANDLE;
-    uint32_t texteW = 0, texteH = 0, texteEchelle = 0;
+    // Messages (capture, performances, succès) : cadres RGBA copiés sur l'image de la chaîne d'échange (tampons
+    // visibles du CPU, refaits quand le texte change)
+    struct Texte {
+        VkBuffer buf = VK_NULL_HANDLE;
+        VkDeviceMemory mem = VK_NULL_HANDLE;
+        uint32_t w = 0, h = 0, echelle = 0;
+        std::string s;
+    } capture, perfs, succes;
 };
 State* g = nullptr;
 std::atomic<int64_t> g_annonceFin{0};   // fin d'affichage du message de capture (steady_clock, ns)
+std::mutex g_textesMu;                  // textes donnés par d'autres fils
+std::string g_perfs, g_succes;          // performances (vide : masqué) ; dernier succès débloqué
+int64_t g_succesFin = 0;                // fin d'affichage du succès (steady_clock, ns)
 
 int64_t MaintenantNs() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// Cadre « Capture effectuée » (français) ou « Screenshot saved » à l'échelle `e`, dans un tampon visible du CPU.
-bool EnsureTexte(uint32_t e) {
-    if (g->texteBuf && g->texteEchelle == e) return true;
+bool Francais() { return config::LangueXbox(config::g.langue, config::LangueSysteme()) == 4; }
+
+// Cadre du message `s` à l'échelle `e` dans le tampon de `t` (refait si le texte ou l'échelle change). Appelé après
+// WaitFrame : l'ancien tampon n'est plus lu par le GPU.
+bool EnsureTexte(State::Texte& t, const std::string& s, uint32_t e) {
+    if (t.buf && t.echelle == e && t.s == s) return true;
     VkDevice dev = g->ctx->device;
-    if (g->texteBuf) vkDestroyBuffer(dev, g->texteBuf, nullptr), vkFreeMemory(dev, g->texteMem, nullptr);
-    g->texteBuf = VK_NULL_HANDLE, g->texteMem = VK_NULL_HANDLE, g->texteEchelle = 0;
-    const bool fr = config::LangueXbox(config::g.langue, config::LangueSysteme()) == 4;
-    const std::vector<uint8_t> rgba = TexteRgba(fr ? "Capture effectu\xc3\xa9" "e" : "Screenshot saved", e, &g->texteW, &g->texteH);
+    if (t.buf) vkDestroyBuffer(dev, t.buf, nullptr), vkFreeMemory(dev, t.mem, nullptr);
+    t.buf = VK_NULL_HANDLE, t.mem = VK_NULL_HANDLE, t.echelle = 0;
+    const std::vector<uint8_t> rgba = TexteRgba(s, e, &t.w, &t.h);
     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bi.size = rgba.size();
     bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    if (vkCreateBuffer(dev, &bi, nullptr, &g->texteBuf) != VK_SUCCESS) return false;
+    if (vkCreateBuffer(dev, &bi, nullptr, &t.buf) != VK_SUCCESS) return false;
     VkMemoryRequirements mr;
-    vkGetBufferMemoryRequirements(dev, g->texteBuf, &mr);
+    vkGetBufferMemoryRequirements(dev, t.buf, &mr);
     VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
     ai.allocationSize = mr.size;
     ai.memoryTypeIndex = g->ctx->FindMemory(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* p = nullptr;
-    if (ai.memoryTypeIndex == UINT32_MAX || vkAllocateMemory(dev, &ai, nullptr, &g->texteMem) != VK_SUCCESS ||
-        vkBindBufferMemory(dev, g->texteBuf, g->texteMem, 0) != VK_SUCCESS || vkMapMemory(dev, g->texteMem, 0, bi.size, 0, &p) != VK_SUCCESS) {
-        if (g->texteMem) vkFreeMemory(dev, g->texteMem, nullptr);
-        vkDestroyBuffer(dev, g->texteBuf, nullptr);
-        g->texteBuf = VK_NULL_HANDLE, g->texteMem = VK_NULL_HANDLE;
+    if (ai.memoryTypeIndex == UINT32_MAX || vkAllocateMemory(dev, &ai, nullptr, &t.mem) != VK_SUCCESS ||
+        vkBindBufferMemory(dev, t.buf, t.mem, 0) != VK_SUCCESS || vkMapMemory(dev, t.mem, 0, bi.size, 0, &p) != VK_SUCCESS) {
+        if (t.mem) vkFreeMemory(dev, t.mem, nullptr);
+        vkDestroyBuffer(dev, t.buf, nullptr);
+        t.buf = VK_NULL_HANDLE, t.mem = VK_NULL_HANDLE;
         return false;
     }
     memcpy(p, rgba.data(), rgba.size());
-    vkUnmapMemory(dev, g->texteMem);
-    g->texteEchelle = e;
+    vkUnmapMemory(dev, t.mem);
+    t.echelle = e;
+    t.s = s;
     return true;
+}
+// Copie du cadre `t` en (x, y) sur l'image de la chaîne d'échange, s'il y tient.
+void CopierTexte(VkCommandBuffer cmd, VkImage dst, const State::Texte& t, int32_t x, int32_t y) {
+    if (x < 0 || y < 0 || x + t.w > g->extent.width || y + t.h > g->extent.height) return;
+    vk::Context::Transition(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkBufferImageCopy c{};
+    c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    c.imageOffset = {x, y, 0};
+    c.imageExtent = {t.w, t.h, 1};
+    vkCmdCopyBufferToImage(cmd, t.buf, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
 }
 
 // GLSL (calcul) -> SPIR-V (glslang)
@@ -129,12 +150,16 @@ bool CompileGlsl(const char* source, std::vector<uint32_t>* spirv, std::string* 
 }
 
 // Passe 0 : FXAA (version « console » de T. Lottes). Passe 1 : netteté AMD CAS, correction couleur Xbox (courbe
-// PWL du Xenos -> linéaire -> sRGB, approximation), luminosité, gamma.
+// PWL du Xenos -> linéaire -> sRGB, approximation), luminosité, gamma, filtre pour daltoniens (dalton 1 protanopie,
+// 2 deutéranopie, 3 tritanopie) : vision simulée par les matrices de Machado, Oliveira et Fernandes (« A
+// Physiologically-based Model for Simulation of Color Vision Deficiency », IEEE TVCG 2009, sévérité 1, RVB linéaire),
+// différence reportée sur les canaux encore distingués (daltonisation de Fidaner, Lin et Ozguven, 2005 : rouge perdu
+// -> vert et bleu ; tritanopie, par symétrie : bleu perdu -> rouge et vert).
 const char* kPostGlsl = R"(#version 450
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0) uniform sampler2D src;
 layout(set = 0, binding = 1, rgba8) uniform writeonly image2D dst;
-layout(push_constant) uniform P { uint pass; float sharp, bright, gamma; uint xbox; } p;
+layout(push_constant) uniform P { uint pass; float sharp, bright, gamma; uint xbox, dalton; } p;
 vec3 at(ivec2 c) { return texelFetch(src, clamp(c, ivec2(0), textureSize(src, 0) - 1), 0).rgb; }
 vec3 pwlToLinear(vec3 c) {
     vec3 x = c * 255.0;
@@ -142,6 +167,7 @@ vec3 pwlToLinear(vec3 c) {
     return clamp(l / 1023.0, 0.0, 1.0);
 }
 vec3 linearToSrgb(vec3 l) { return mix(l * 12.92, 1.055 * pow(l, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, l)); }
+vec3 srgbToLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
 void main() {
     ivec2 g = ivec2(gl_GlobalInvocationID.xy);
     ivec2 sz = textureSize(src, 0);
@@ -174,6 +200,14 @@ void main() {
         if (p.xbox != 0u) c = linearToSrgb(pwlToLinear(c));
         c = clamp(c * p.bright, 0.0, 1.0);
         if (p.gamma != 1.0) c = pow(c, vec3(1.0 / p.gamma));
+        if (p.dalton != 0u) {   // mat3(lignes) : l * m = m · l
+            mat3 m = p.dalton == 1u ? mat3(vec3(0.152286, 1.052583, -0.204868), vec3(0.114503, 0.786281, 0.099216), vec3(-0.003882, -0.048116, 1.051998))
+                   : p.dalton == 2u ? mat3(vec3(0.367322, 0.860646, -0.227968), vec3(0.280085, 0.672501, 0.047413), vec3(-0.011820, 0.042940, 0.968881))
+                   : mat3(vec3(1.255528, -0.076749, -0.178779), vec3(-0.078411, 0.930809, 0.147602), vec3(0.004733, 0.691367, 0.303900));
+            vec3 l = srgbToLinear(c), e = l - l * m;
+            l += p.dalton == 3u ? vec3(0.7 * e.b + e.r, 0.7 * e.b + e.g, 0.0) : vec3(0.0, 0.7 * e.r + e.g, 0.7 * e.r + e.b);
+            c = linearToSrgb(clamp(l, 0.0, 1.0));
+        }
     }
     imageStore(dst, g, vec4(c, 1.0));
 }
@@ -181,7 +215,7 @@ void main() {
 
 bool PostWanted() {
     const auto& o = config::g;
-    return o.antiAliasing == "fxaa" || o.sharpness > 0 || o.brightness != 1.0f || o.gamma != 1.0f || o.xboxColor;
+    return o.antiAliasing == "fxaa" || o.sharpness > 0 || o.brightness != 1.0f || o.gamma != 1.0f || o.xboxColor || o.daltonisme != "aucun";
 }
 // Pipeline (une fois) et images de sortie à la taille de l'image source.
 bool EnsurePost(uint32_t w, uint32_t h) {
@@ -198,7 +232,7 @@ bool EnsurePost(uint32_t w, uint32_t h) {
         dl.bindingCount = 2;
         dl.pBindings = b;
         vkCreateDescriptorSetLayout(c.device, &dl, nullptr, &g->postSetLayout);
-        VkPushConstantRange pr{VK_SHADER_STAGE_COMPUTE_BIT, 0, 20};
+        VkPushConstantRange pr{VK_SHADER_STAGE_COMPUTE_BIT, 0, 24};
         VkPipelineLayoutCreateInfo pl{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pl.setLayoutCount = 1;
         pl.pSetLayouts = &g->postSetLayout;
@@ -232,8 +266,9 @@ bool EnsurePost(uint32_t w, uint32_t h) {
         g->postOk = ok && vkAllocateDescriptorSets(c.device, &ai, g->postSets) == VK_SUCCESS &&
                     vkCreateSampler(c.device, &sc, nullptr, &g->postSampler) == VK_SUCCESS;
         const auto& o = config::g;
-        fprintf(stderr, "[fenetre] post-traitement %s : anticrénelage %s, netteté %g, luminosité %g, gamma %g, couleur Xbox %s\n",
-                g->postOk ? "actif" : "indisponible", o.antiAliasing.c_str(), o.sharpness, o.brightness, o.gamma, o.xboxColor ? "oui" : "non");
+        fprintf(stderr, "[fenetre] post-traitement %s : anticrénelage %s, netteté %g, luminosité %g, gamma %g, couleur Xbox %s, daltonisme %s\n",
+                g->postOk ? "actif" : "indisponible", o.antiAliasing.c_str(), o.sharpness, o.brightness, o.gamma, o.xboxColor ? "oui" : "non",
+                o.daltonisme.c_str());
     }
     if (!g->postOk) return false;
     if (g->post[0].width != w || g->post[0].height != h) {
@@ -477,6 +512,12 @@ void PresentResize() { if (g) g->stale = true; }
 
 void AnnoncerCapture() { g_annonceFin = MaintenantNs() + 2000000000LL; }
 
+void AfficherPerfs(const std::string& texte) { std::lock_guard<std::mutex> l(g_textesMu); g_perfs = texte; }
+void AnnoncerSucces(const std::string& texte) {
+    std::lock_guard<std::mutex> l(g_textesMu);
+    g_succes = texte, g_succesFin = MaintenantNs() + 4000000000LL;
+}
+
 void PresentFrameImage(VkImage native, uint32_t w, uint32_t h, uint32_t drawableW, uint32_t drawableH) {
     if (!g || !w || !h) return;
     WaitFrame();
@@ -514,7 +555,8 @@ void PresentFrameImage(VkImage native, uint32_t w, uint32_t h, uint32_t drawable
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->postPipe);
         const auto& o = config::g;
         for (uint32_t pass = o.antiAliasing == "fxaa" ? 0 : 1; pass < 2; pass++) {
-            struct { uint32_t pass; float sharp, bright, gamma; uint32_t xbox; } pc{pass, o.sharpness, o.brightness, o.gamma, o.xboxColor ? 1u : 0u};
+            const uint32_t dalton = o.daltonisme == "protanopie" ? 1 : o.daltonisme == "deuteranopie" ? 2 : o.daltonisme == "tritanopie" ? 3 : 0;
+            struct { uint32_t pass; float sharp, bright, gamma; uint32_t xbox, dalton; } pc{pass, o.sharpness, o.brightness, o.gamma, o.xboxColor ? 1u : 0u, dalton};
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g->postLayout, 0, 1, &g->postSets[pass], 0, nullptr);
             vkCmdPushConstants(cmd, g->postLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
             vkCmdDispatch(cmd, (w + 7) / 8, (h + 7) / 8, 1);
@@ -532,7 +574,8 @@ void PresentFrameImage(VkImage native, uint32_t w, uint32_t h, uint32_t drawable
     const int32_t x0 = int32_t((W - dw) / 2), y0 = int32_t((H - dh) / 2);
     // Option agrandissement = "fsr1" : EASU (w x h -> dw x dh) puis RCAS, copie 1:1 ensuite (sinon étirement linéaire)
     uint32_t srcW = w, srcH = h;
-    if (config::g.upscale == "fsr1" && dw && dh && (dw != w || dh != h) && EnsureFsr(dw, dh)) {
+    // FSR agrandit seulement : image plus grande que la fenêtre (définition interne x2 en 1080p) -> réduction linéaire
+    if (config::g.upscale == "fsr1" && dw && dh && dw > w && dh > h && EnsureFsr(dw, dh)) {
         VkImageView srcView = blitSrc == g->source.image ? g->source.view : g->post[1].view;
         if (blitLayout != VK_IMAGE_LAYOUT_GENERAL)
             vk::Context::Transition(cmd, blitSrc, blitLayout, VK_IMAGE_LAYOUT_GENERAL);
@@ -579,18 +622,21 @@ void PresentFrameImage(VkImage native, uint32_t w, uint32_t h, uint32_t drawable
     vkCmdBlitImage(cmd, blitSrc, blitLayout, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
     const uint32_t e = std::max<uint32_t>(1, g->extent.height / 360);   // 3 en 1080p
     const bool annonce = MaintenantNs() < g_annonceFin.load();
-    const bool texte = annonce && EnsureTexte(e);
+    const bool texte = annonce && EnsureTexte(g->capture, Francais() ? "Capture effectu\xc3\xa9" "e" : "Screenshot saved", e);
     static bool dit = false;   // échec signalé une fois par message
     if (annonce && !texte && !dit) fprintf(stderr, "[capture] message « Capture effectuée » impossible (tampon)\n");
     dit = annonce;
-    if (texte && g->texteW + 8 * e <= g->extent.width && g->texteH + 8 * e <= g->extent.height) {
-        vk::Context::Transition(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        VkBufferImageCopy c{};
-        c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        c.imageOffset = {int32_t(8 * e), int32_t(8 * e), 0};
-        c.imageExtent = {g->texteW, g->texteH, 1};
-        vkCmdCopyBufferToImage(cmd, g->texteBuf, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+    if (texte) CopierTexte(cmd, dst, g->capture, int32_t(8 * e), int32_t(8 * e));
+    std::string perfs, succes;   // option afficher_perfs : en haut à droite ; succès : en haut au centre, sous la 1re ligne
+    {
+        std::lock_guard<std::mutex> l(g_textesMu);
+        perfs = g_perfs;
+        if (MaintenantNs() < g_succesFin) succes = g_succes;
     }
+    if (!succes.empty() && EnsureTexte(g->succes, succes, e))
+        CopierTexte(cmd, dst, g->succes, (int32_t(g->extent.width) - int32_t(g->succes.w)) / 2, int32_t(32 * e));
+    if (!perfs.empty() && EnsureTexte(g->perfs, perfs, e))
+        CopierTexte(cmd, dst, g->perfs, int32_t(g->extent.width) - int32_t(g->perfs.w + 8 * e), int32_t(8 * e));
     vk::Context::Transition(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     vkEndCommandBuffer(cmd);
 

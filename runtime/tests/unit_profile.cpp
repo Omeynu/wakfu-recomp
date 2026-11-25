@@ -11,8 +11,10 @@ static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { printf("ÉCHEC ligne %d : %s\n", __LINE__, #c); g_fail++; } } while (0)
 
 int main(int argc, char** argv) {
-    if (argc < 2) { printf("usage : %s <dossier>\n", argv[0]); return 2; }
-    const std::string dir = std::string(argv[1]) + "/profile";
+    // sans argument : dossier temporaire propre au test (lancement seul possible)
+    const std::filesystem::path base = argc >= 2 ? std::filesystem::path(argv[1]) : std::filesystem::temp_directory_path() / "wakfu_unit_profile";
+    std::filesystem::create_directories(base);
+    const std::string dir = (base / "profile").string();
     std::filesystem::remove_all(dir);
     g_base = (uint8_t*)platform::ReserveGuestMemory(0x100000000ull);
     const uint32_t kBin = 0x63E83FFF, kInt = 0x10040002, kUnset = 0x63E83FFE;   // binaire 1000 o, entier, binaire

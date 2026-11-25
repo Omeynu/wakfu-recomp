@@ -8,7 +8,7 @@
 #include <thread>
 #include "../platform.h"
 #include "../trace.h"
-#include "../process.h"
+#include "../processus.h"
 #ifdef WAKFU_HAS_SHADERGEN
 #include "../natif/device.h"
 #endif

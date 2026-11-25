@@ -780,7 +780,11 @@ bool dansPath(const std::string& c)
     return false;
 }
 // Paquets Arch / CachyOS (installer.sh) ; glslang : fichier de configuration CMake (pas toujours de .pc)
-const char* const kPaquets[] = { "clang", "cmake", "ninja", "pkgconf", "sdl2-compat", "vulkan-headers", "vulkan-icd-loader", "glslang", "ffmpeg" };
+// SDL3 n'y est pas : absente du système, elle est compilée depuis l'archive du paquet (construireSdl3)
+const char* const kPaquets[] = { "clang", "cmake", "ninja", "pkgconf", "vulkan-headers", "vulkan-icd-loader", "glslang", "ffmpeg" };
+// Archive officielle de SDL3 dans le paquet (deps/) ; somme de packaging/windows/deps.lock (vérifiée par build-paquet.sh)
+const char* const kSdl3Archive = "SDL3-3.4.20.tar.gz";
+const char* const kSdl3Sha256 = "f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f";
 #endif
 
 std::vector<std::string> dependancesManquantes()
@@ -790,7 +794,7 @@ std::vector<std::string> dependancesManquantes()
     for (const char* c : { "clang", "clang++", "cmake", "ninja", "pkg-config" })
         if (!dansPath(c)) r.push_back(c);
     if (dansPath("pkg-config"))
-        for (const char* m : { "sdl2", "vulkan", "libavcodec", "libavutil" })
+        for (const char* m : { "vulkan", "libavcodec", "libavutil" })
             if (std::system(("pkg-config --exists " + std::string(m)).c_str()) != 0) r.push_back(m);
     bool glslang = false;
     for (const char* d : { "/usr/lib/cmake/glslang", "/usr/lib64/cmake/glslang", "/usr/lib/x86_64-linux-gnu/cmake/glslang", "/usr/local/lib/cmake/glslang" })
@@ -818,6 +822,45 @@ void installerDependances()
     step("installation des dépendances", a);
 #endif
 }
+
+#ifndef _WIN32
+// SDL3 absente du système (pkg-config sdl3) : compilée en bibliothèque statique dans <outils>/SDL3 depuis l'archive
+// officielle du paquet, somme vérifiée avant extraction ; le jeu est lié avec (aucune SDL3 système nécessaire).
+void construireSdl3(Install& in)
+{
+    const fs::path& T = in.T;
+    if (std::system("pkg-config --exists sdl3") == 0 || fs::exists(T / "SDL3" / ".construit")) return;
+    say("[1/5] Compilation de SDL3 (absente du système)\n");
+    const fs::path tgz = T / "deps" / kSdl3Archive, somme = T / "deps" / "SDL3.sha256", src = T / "src" / "SDL3", bld = T / "build-sdl3";
+    std::ofstream(somme) << kSdl3Sha256 << "  " << u8(tgz) << "\n";
+    step("vérification de l'archive SDL3", { "sha256sum", "-c", "--quiet", w(somme) });
+    supprimerDans(in.D, src);
+    supprimerDans(in.D, bld);
+    supprimerDans(in.D, T / "SDL3");
+    fs::create_directories(src);
+    step("extraction de SDL3", { "tar", "-xzf", w(tgz), "-C", w(src), "--strip-components=1" });
+    try
+    {
+        step("configuration de SDL3", { "cmake", "-S", w(src), "-B", w(bld), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_C_COMPILER=clang", wdef("CMAKE_INSTALL_PREFIX", T / "SDL3"), "-DSDL_SHARED=OFF", "-DSDL_STATIC=ON",
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=ON", "-DSDL_TESTS=OFF", "-DSDL_TEST_LIBRARY=OFF", "-DSDL_EXAMPLES=OFF", "-DSDL_X11_XTEST=OFF" });
+        step("compilation de SDL3", { "ninja", "-C", w(bld), "install" });
+    }
+    catch (const Error& e)
+    {
+        throw Error(std::string(e.what()) + " ; SDL3 demande les en-têtes de développement X11 ou Wayland et du son (PulseAudio, "
+            "PipeWire ou ALSA) : https://wiki.libsdl.org/SDL3/README-linux#build-dependencies (ou installer le paquet SDL3 de la distribution)");
+    }
+    std::ifstream f(bld / "include-config-release" / "build_config" / "SDL_build_config.h");
+    const std::string conf((std::istreambuf_iterator<char>(f)), {});
+    if (conf.find("#define SDL_AUDIO_DRIVER_PULSEAUDIO 1") == std::string::npos && conf.find("#define SDL_AUDIO_DRIVER_PIPEWIRE 1") == std::string::npos &&
+        conf.find("#define SDL_AUDIO_DRIVER_ALSA 1") == std::string::npos)
+        say("Attention : SDL3 compilée sans pilote son (en-têtes PulseAudio, PipeWire ou ALSA absents) : jeu sans son.\n");
+    supprimerDans(in.D, bld);
+    supprimerDans(in.D, src);
+    std::ofstream(T / "SDL3" / ".construit").close();
+}
+#endif
 
 // 1. Outils
 void ensureTools(Install& in)
@@ -878,6 +921,7 @@ void ensureTools(Install& in)
         fs::copy_file(T / "xenosrecomp" / "XenosRecomp" / "shader_common.h", T / "natif" / "shader_common.h", o);
         std::ofstream(T / ".construit").close();
     }
+    construireSdl3(in);
 #endif
 }
 
@@ -954,13 +998,15 @@ void buildGame(Install& in)
             wdef("CMAKE_C_COMPILER", L / "clang.exe"), wdef("CMAKE_CXX_COMPILER", L / "clang++.exe"),
             wdef("PPC_DIR", W / "out" / "ppc"), wdef("SIMDE_DIR", sdk / "thirdparty" / "simde"), wdef("GEN_DIR", W / "gen"),
             wdef("glslang_DIR", T / "deps" / "glslang" / "lib" / "cmake" / "glslang"),
-            wdef("SDL2_DIR", T / "deps" / "SDL2" / "lib" / "cmake" / "SDL2"),
+            wdef("SDL3_DIR", T / "deps" / "SDL3" / "lib" / "cmake" / "SDL3"),
             wdef("FFMPEG_PREFIX", T / "deps" / "ffmpeg"), wdef("VULKAN_SYS_INCLUDE", T / "deps" / "vulkan" / "include"),
             wdef("CMAKE_RC_COMPILER", L / "x86_64-w64-mingw32-windres.exe"), wdef("GAME_ICON", icone ? ico : fs::path()) }, W);
 #else
-        step("configuration CMake", { "cmake", "-S", w(T / "src" / "runtime"), "-B", w(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
+        std::vector<Arg> a = { "cmake", "-S", w(T / "src" / "runtime"), "-B", w(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
             "-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++",
-            wdef("PPC_DIR", W / "out" / "ppc"), wdef("SIMDE_DIR", sdk / "thirdparty" / "simde"), wdef("GEN_DIR", W / "gen") }, W);
+            wdef("PPC_DIR", W / "out" / "ppc"), wdef("SIMDE_DIR", sdk / "thirdparty" / "simde"), wdef("GEN_DIR", W / "gen") };
+        if (fs::exists(T / "SDL3" / ".construit")) a.push_back(wdef("SDL3_DIR", T / "SDL3" / "lib" / "cmake" / "SDL3"));   // SDL3 compilée ici
+        step("configuration CMake", a, W);
 #endif
         std::ofstream(build / ".outils") << in.id;
     }

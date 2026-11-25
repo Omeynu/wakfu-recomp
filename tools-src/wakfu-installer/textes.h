@@ -47,6 +47,12 @@ enum Texte {
     T_Ombres, T_OmbresAide, T_Origine, T_Prereglage, T_PrereglageAide, T_Economie, T_Equilibre, T_Qualite, T_Personnalise,
     // Options O3
     T_Joueur1, T_Joueur2, T_JoueursAide, T_ManetteN,
+    // Options O4
+    T_AfficherPerfs, T_AfficherPerfsAide, T_NotifSucces, T_NotifSuccesAide, T_AaTransparence, T_AaTransparenceAide,
+    T_Daltonisme, T_DaltonismeAide, T_Protanopie, T_Deuteranopie, T_Tritanopie,
+    // Remappage de la manette
+    T_OngletManette, T_ManetteAide, T_AppuyerBouton, T_BoutonDefaut, T_ReinitialiserManette, T_AucunBouton,
+    T_Icones, T_IconesAide, T_IconesAuto,
     NbTextes
 };
 

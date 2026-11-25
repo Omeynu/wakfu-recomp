@@ -20,6 +20,13 @@ const char* const kControls[] = {"a", "b", "x", "y", "start", "back", "lb", "rb"
                                  "droite", "clic_gauche", "clic_droit", "stick_gauche_haut", "stick_gauche_bas",
                                  "stick_gauche_gauche", "stick_gauche_droite", "stick_droit_haut", "stick_droit_bas",
                                  "stick_droit_gauche", "stick_droit_droite", nullptr};
+const char* const kPadControls[] = {"a", "b", "x", "y", "lb", "rb", "lt", "rt", "back", "start", "ls", "rs",
+                                    "haut", "bas", "gauche", "droite", nullptr};
+// Noms SDL3 (SDL_GetGamepadButtonFromString, gâchettes : SDL_GetGamepadAxisFromString)
+const char* const kPadBoutons[] = {"a", "b", "x", "y", "back", "guide", "start", "leftstick", "rightstick", "leftshoulder",
+                                   "rightshoulder", "dpup", "dpdown", "dpleft", "dpright", "misc1", "paddle1", "paddle2",
+                                   "paddle3", "paddle4", "touchpad", "misc2", "misc3", "misc4", "misc5", "misc6",
+                                   "lefttrigger", "righttrigger", "aucun", nullptr};
 
 namespace {
 const char* const kLangues[] = {"en", "ja", "de", "fr", "es", "it"};   // index + 1 = XC_LANGUAGE
@@ -67,10 +74,12 @@ Config Parse(const std::string& text, std::vector<std::string>* errors) {
     if (auto b = t.at_path("video.multi_echantillonnage").value_exact<bool>()) c.msaa = *b ? "auto" : "desactive";   // ancienne forme
     else Get<std::string>(t, "video", "multi_echantillonnage", &c.msaa, errors,
                      [](const std::string& v) { return v == "auto" || v == "active" || v == "desactive" || v == "2x" || v == "4x" || v == "8x"; });
+    if (c.msaa == "active") c.msaa = "4x";   // ancien « active » = x4 : réécrit "4x", le choix coché dans RecompLauncher
     Get<int>(t, "video", "echelle_rendu", &c.renderScale, errors, [](const int& v) { return v >= 1 && v <= 4; });
     Get<int>(t, "video", "filtrage_anisotrope", &c.anisotropy, errors,
              [](const int& v) { return v == 1 || v == 2 || v == 4 || v == 8 || v == 16; });
     Get<std::string>(t, "video", "ombres", &c.ombres, errors, [](const std::string& v) { return v == "origine" || v == "x2" || v == "x4"; });
+    Get<bool>(t, "video", "anticrenelage_transparence", &c.anticrenelageTransparence, errors);
     Get<std::string>(t, "post", "anticrenelage", &c.antiAliasing, errors,
                      [](const std::string& v) { return v == "aucun" || v == "fxaa"; });
     Get<std::string>(t, "post", "agrandissement", &c.upscale, errors,
@@ -79,6 +88,9 @@ Config Parse(const std::string& text, std::vector<std::string>* errors) {
     Get<float>(t, "post", "luminosite", &c.brightness, errors, [](const float& v) { return v >= 0.5f && v <= 2.0f; });
     Get<float>(t, "post", "gamma", &c.gamma, errors, [](const float& v) { return v >= 0.5f && v <= 3.0f; });
     Get<bool>(t, "post", "correction_couleur_xbox", &c.xboxColor, errors);
+    Get<std::string>(t, "post", "daltonisme", &c.daltonisme, errors, [](const std::string& v) {
+        return v == "aucun" || v == "protanopie" || v == "deuteranopie" || v == "tritanopie";
+    });
     Get<float>(t, "audio", "volume", &c.volume, errors, [](const float& v) { return v >= 0.0f && v <= 1.0f; });
     Get<bool>(t, "audio", "couper_hors_focus", &c.muteUnfocused, errors);
     if (auto b = t.at_path("entrees.vibrations").value_exact<bool>()) c.vibration = *b ? 1.0f : 0.0f;   // ancienne forme
@@ -99,9 +111,13 @@ Config Parse(const std::string& text, std::vector<std::string>* errors) {
         errors->push_back("[entrees] joueur1 et joueur2 identiques (« " + c.joueurs[0] + " ») : défauts gardés");
         c.joueurs[0] = "1", c.joueurs[1] = "2";
     }
+    Get<std::string>(t, "entrees", "icones", &c.icones, errors,
+                     [](const std::string& v) { return v == "auto" || v == "xbox" || v == "playstation"; });
     Get<bool>(t, "confort", "passer_logos", &c.skipLogos, errors);
     Get<bool>(t, "confort", "console", &c.console, errors);
     Get<std::string>(t, "confort", "touche_capture", &c.captureKey, errors, [](const std::string& v) { return !v.empty(); });
+    Get<bool>(t, "confort", "afficher_perfs", &c.afficherPerfs, errors);
+    Get<bool>(t, "confort", "notifications_succes", &c.notificationsSucces, errors);
     Get<std::string>(t, "jeu", "langue", &c.langue, errors,
                      [](const std::string& v) { return v == "auto" || LangueXbox(v, "") != 0; });
     if (const toml::table* k = t["touches"].as_table())
@@ -112,6 +128,17 @@ Config Parse(const std::string& text, std::vector<std::string>* errors) {
             auto v = node.value_exact<std::string>();
             if (!known || !v || v->empty()) { errors->push_back("[touches] " + n + " : commande ou touche invalide"); continue; }
             c.keys[n] = *v;
+        }
+    if (const toml::table* m = t["manette"].as_table())
+        for (auto&& [name, node] : *m) {
+            const std::string n(name.str());
+            auto v = node.value_exact<std::string>();
+            bool ok = false;
+            for (const char* const* p = kPadControls; *p; p++) ok |= n == *p;
+            bool bouton = v && v->empty();   // "" : bouton vidé dans RecompLauncher = "aucun"
+            for (const char* const* p = kPadBoutons; v && *p; p++) bouton |= *v == *p;
+            if (!ok || !bouton) { errors->push_back("[manette] " + n + " : bouton du jeu ou bouton de manette invalide"); continue; }
+            c.pad[n] = v->empty() ? "aucun" : *v;
         }
     return c;
 }
@@ -138,17 +165,19 @@ std::string Serialize(const Config& c) {
          "limite_images = " << c.fpsLimit << "    # images par seconde au plus (0 = aucune limite)\n"
          "afficher_images_par_seconde = " << b(c.showFps) << "   # dans le titre de la fenêtre\n"
          "gpu = " << q(c.gpu) << "           # partie du nom du GPU voulu (vide = automatique : dédié, puis intégré)\n"
-         "multi_echantillonnage = " << q(c.msaa) << "   # auto (x4 sur GPU dédié seulement) | active (x4) | 2x | 4x | 8x | desactive : MSAA des scènes qui le demandent (plafonné par le GPU)\n"
+         "multi_echantillonnage = " << q(c.msaa) << "   # auto (x4 sur GPU dédié seulement) | 2x | 4x | 8x | desactive : MSAA des scènes qui le demandent (plafonné par le GPU)\n"
          "echelle_rendu = " << c.renderScale << "    # définition interne : 1 = 1280x720, 2 = 2560x1440 (1 à 4)\n"
          "filtrage_anisotrope = " << c.anisotropy << "   # textures : 1 (désactivé), 2, 4, 8 ou 16 (plafonné par le GPU)\n"
-         "ombres = " << q(c.ombres) << "   # origine | x2 | x4 : ombre (zone 1) plus fine, en plus de echelle_rendu\n\n"
+         "ombres = " << q(c.ombres) << "   # origine | x2 | x4 : ombre (zone 1) plus fine, en plus de echelle_rendu\n"
+         "anticrenelage_transparence = " << b(c.anticrenelageTransparence) << "   # bords des feuillages et grilles lissés par le MSAA (alpha-to-coverage)\n\n"
          "[post]\n"
          "anticrenelage = " << q(c.antiAliasing) << "   # aucun | fxaa (passe finale sur l'image affichée)\n"
          "agrandissement = " << q(c.upscale) << "   # lineaire | fsr1 (AMD FSR 1 : image 1280x720 agrandie vers la fenêtre)\n"
          "nettete = " << c.sharpness << "            # netteté AMD CAS, de 0 (désactivée) à 1\n"
          "luminosite = " << c.brightness << "         # multiplicateur, de 0.5 à 2\n"
          "gamma = " << c.gamma << "              # de 0.5 à 3 (plus grand : tons moyens plus clairs)\n"
-         "correction_couleur_xbox = " << b(c.xboxColor) << "   # courbe gamma PWL du Xenos -> sRGB (approximation)\n\n"
+         "correction_couleur_xbox = " << b(c.xboxColor) << "   # courbe gamma PWL du Xenos -> sRGB (approximation)\n"
+         "daltonisme = " << q(c.daltonisme) << "   # aucun | protanopie | deuteranopie | tritanopie : couleurs corrigées pour les daltoniens\n\n"
          "[audio]\n"
          "volume = " << c.volume << "         # volume général, de 0 à 1 (musique et effets : menu du jeu)\n"
          "couper_hors_focus = " << b(c.muteUnfocused) << "   # son coupé quand la fenêtre n'a pas le focus\n\n"
@@ -157,11 +186,14 @@ std::string Serialize(const Config& c) {
          "zone_morte = " << c.deadZone << "   # zone morte des sticks, de 0 (aucune) à 0.5\n"
          "entree_arriere_plan = " << b(c.backgroundInput) << "   # manette lue quand la fenêtre n'a pas le focus\n"
          "joueur1 = " << q(c.joueurs[0]) << "   # commandes du joueur 1 : \"1\" à \"4\" (manette n°) ou \"clavier\"\n"
-         "joueur2 = " << q(c.joueurs[1]) << "   # joueur 2 (coopératif) ; le clavier va au joueur 1 si personne n'a \"clavier\"\n\n"
+         "joueur2 = " << q(c.joueurs[1]) << "   # joueur 2 (coopératif) ; le clavier va au joueur 1 si personne n'a \"clavier\"\n"
+         "icones = " << q(c.icones) << "   # auto (manette du joueur 1) | xbox | playstation : icônes de boutons du jeu\n\n"
          "[confort]\n"
          "passer_logos = " << b(c.skipLogos) << "   # sauter les logos d'introduction\n"
          "console = " << b(c.console) << "   # Windows : console du journal (false : journal dans journal.log)\n"
-         "touche_capture = " << q(c.captureKey) << "   # capture d'écran (PNG dans captures/) ; nom de touche SDL\n\n"
+         "touche_capture = " << q(c.captureKey) << "   # capture d'écran (PNG dans captures/) ; nom de touche SDL\n"
+         "afficher_perfs = " << b(c.afficherPerfs) << "   # img/s, ms GPU et CPU par image en haut à droite (hors captures)\n"
+         "notifications_succes = " << b(c.notificationsSucces) << "   # « Succès débloqué : <nom> » affiché 4 s (hors captures)\n\n"
          "[jeu]\n"
          "langue = " << q(c.langue) << "   # auto (langue du système) | fr | en | de | es | it | ja\n\n"
          "[touches]\n"
@@ -170,6 +202,12 @@ std::string Serialize(const Config& c) {
          "# clic_droit stick_gauche_{haut,bas,gauche,droite} stick_droit_{haut,bas,gauche,droite}. Exemple :\n"
          "# a = \"Space\"\n";
     for (auto& [k, v] : c.keys) o << k << " = " << q(v) << "\n";
+    o << "\n[manette]\n"
+         "# Manette : bouton du jeu = bouton physique (noms SDL : a b x y back guide start leftstick rightstick\n"
+         "# leftshoulder rightshoulder dpup dpdown dpleft dpright misc1 paddle1-4 touchpad lefttrigger righttrigger,\n"
+         "# ou \"aucun\"). Boutons du jeu : a b x y lb rb lt rt back start ls rs haut bas gauche droite. Exemple :\n"
+         "# a = \"b\"\n";
+    for (auto& [k, v] : c.pad) o << k << " = " << q(v) << "\n";
     return o.str();
 }
 
@@ -194,7 +232,7 @@ void Load(const std::string& dataDir) {
     fprintf(stderr, "[config] %s lu\n", path.string().c_str());
 }
 
-bool SaveWindow(const std::string& dataDir, int screen, int x, int y, int w, int h) {
+bool SaveWindow(const std::string& dataDir, int screen, std::optional<int> x, std::optional<int> y, int w, int h) {
     namespace fs = std::filesystem;
     const fs::path path = fs::path(dataDir) / "config.toml", tmp = path.string() + ".tmp";
     std::ifstream f(path, std::ios::binary);
@@ -207,7 +245,7 @@ bool SaveWindow(const std::string& dataDir, int screen, int x, int y, int w, int
     // réécrire un fichier invalide remettrait ses valeurs aux défauts et effacerait ce que le joueur a écrit
     if (!toml::parse(ss.str()) || !errors.empty()) { fprintf(stderr, "[config] %s invalide : fenêtre non mémorisée\n", path.string().c_str()); return false; }
     c.screen = std::clamp(screen, 0, 63);
-    c.posX = std::clamp(x, -16384, 16384), c.posY = std::clamp(y, -16384, 16384);
+    if (x && y) c.posX = std::clamp(*x, -16384, 16384), c.posY = std::clamp(*y, -16384, 16384);
     c.width = std::clamp(w, 320, 16384), c.height = std::clamp(h, 240, 16384);
     std::error_code ec;
     {
@@ -216,8 +254,9 @@ bool SaveWindow(const std::string& dataDir, int screen, int x, int y, int w, int
         if (!o.flush()) ec = std::make_error_code(std::errc::io_error);
     }
     if (!ec) fs::rename(tmp, path, ec);
-    fprintf(stderr, "[config] fenêtre mémorisée : écran %d, position %d,%d, taille %dx%d%s\n", c.screen, *c.posX, *c.posY,
-            c.width, c.height, ec ? " : échec de l'écriture" : "");
+    fprintf(stderr, "[config] fenêtre mémorisée : écran %d, position %s, taille %dx%d%s\n", c.screen,
+            c.posX && c.posY ? (std::to_string(*c.posX) + "," + std::to_string(*c.posY)).c_str() : "centrée", c.width, c.height,
+            ec ? " : échec de l'écriture" : "");
     return !ec;
 }
 

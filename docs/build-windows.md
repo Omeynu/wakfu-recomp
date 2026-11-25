@@ -14,7 +14,7 @@ WakfuRecomp.exe                                                           (fenê
 WakfuRecomp.exe <paquet ou ISO ou dossier du jeu> [<paquet de la TU 2>]   (ligne de commande, ou glisser-déposer sur l'exe)
 ```
 
-Sans argument, une fenêtre (Dear ImGui sur SDL2, rendu 2D de SDL ; textes en français ou en anglais selon la langue
+Sans argument, une fenêtre (Dear ImGui sur SDL3, rendu 2D de SDL ; textes en français ou en anglais selon la langue
 de Windows, tous dans `tools-src/wakfu-installer/textes.cpp`) guide le joueur : accueil,
 champs Jeu et Mise à jour (paquet STFS, ISO/XISO ou dossier ; glisser-déposer ou « Parcourir », contrôle immédiat :
 paquet Xbox 360, titre 584109AA, jeu ou mise à jour, TU 2, taille complète),
@@ -37,7 +37,7 @@ copie. Avec des arguments, les entrées sont d'abord contrôlées comme dans la 
 
 Étapes (dossier `%LOCALAPPDATA%\WakfuRecomp`, ou `--dossier <D>`, ~3 Go libres) : extraction de l'archive
 interne (zstd) dans `outils-<id>` (llvm-mingw 20250114 = LLVM 19.1.7 réduit à x86_64, CMake 3.31.6, ninja,
-`XenonRecomp.exe` patché, `wakfu-prepare.exe`, sources du runtime, glslang/SDL2/FFmpeg précompilés,
+`XenonRecomp.exe` patché, `wakfu-prepare.exe`, sources du runtime, glslang/SDL3/FFmpeg précompilés,
 en-têtes Vulkan), `wakfu-prepare`, XenonRecomp vers `work/out/ppc`, stubs d'imports (portage C++ de
 `gen_imports.py`, sorties identiques vérifiées), CMake + ninja, puis `wakfu.exe` et `jouer.cmd` dans `<D>`.
 Les étapes faites sont reprises (relancer après une erreur ; pour tout recompiler, supprimer `<D>\wakfu.exe`
@@ -47,7 +47,7 @@ Test sous Wine : `wine WakfuRecomp.exe --sans-lancer Z:\…\game\raw`, puis `WAK
 ## 1. Outils (MSYS2, fenêtre « MSYS2 CLANG64 »)
 
 ```sh
-pacman -S --needed git python mingw-w64-clang-x86_64-{clang,lld,cmake,ninja,SDL2,vulkan-devel}
+pacman -S --needed git python mingw-w64-clang-x86_64-{clang,lld,cmake,ninja,sdl3,vulkan-devel}
 ```
 
 ## 2. Sources et fichiers du jeu

@@ -12,3 +12,6 @@ DXC-linux  96faadc7f5c282d2ffda49804beb4c3ee38127bc252b723234e3c5cdf7aa39a1 http
 # Sous-modules de XenosRecomp utilisés : fmt, smol-v, xxHash, zstd (épinglés par son commit). Ancien, NON distribué : dxc-bin https://github.com/renderbag/dxc-bin 12395e36295f950361ca842d8cc461492412facc
 #   (libdxcompiler.so 1.8 dev 4662-416fab6b, SHA-256 da5e0cdfaabcc004b6e29231eec565249835412ad33654e074623d707b5ede11 ;
 #    dxc-linux SHA-256 e48ba27c7e989726d1219b0b900b15eb1b99b669faa3905da3ffba46c52306a9) ; xxHash 2bf8313b934633b2a5b7e8fd239645b85e10c852
+# SDL3 3.4.20 (libsdl-org/SDL, publiée le 2026-11-03, licence zlib ; condensé publié par GitHub) : construite pour llvm-mingw
+# par packaging/windows/build-installer.sh (deps.lock) ; Linux : statique dans le lanceur et compilée chez le joueur sans SDL3 :
+SDL3       f3bb06f55bed9557227a700af2ea62e49497ebdf58037732a731a5fb3ef8581f https://github.com/libsdl-org/SDL/releases/download/release-3.4.20/SDL3-3.4.20.tar.gz

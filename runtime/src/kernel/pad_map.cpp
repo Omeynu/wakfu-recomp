@@ -1,10 +1,11 @@
 // Manette SDL et clavier -> état XINPUT (voir window.h). Clavier par position physique (scancodes),
 // indépendant de la disposition : noms QWERTY entre parenthèses, AZERTY ensuite.
 #include "window.h"
-#include <SDL_gamecontroller.h>
-#include <SDL_keyboard.h>
-#include <SDL_scancode.h>
+#include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_keyboard.h>
+#include <SDL3/SDL_scancode.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -33,6 +34,20 @@ SDL_Scancode g_lt = SDL_SCANCODE_HOME, g_rt = SDL_SCANCODE_END;
 SDL_Scancode g_stick[2][4] = {{SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D},
                               {SDL_SCANCODE_I, SDL_SCANCODE_K, SDL_SCANCODE_J, SDL_SCANCODE_L}};
 
+// Option [manette] : source de chaque bouton du jeu, dans l'ordre de config::kPadControls (a b x y lb rb lt rt back
+// start ls rs haut bas gauche droite) : bouton SDL, kGachette + axe SDL (gâchette) ou -1 (aucun).
+constexpr int kGachette = 64;
+constexpr std::array<int, 16> kDefaut = {
+    SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST, SDL_GAMEPAD_BUTTON_NORTH,
+    SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,
+    kGachette + SDL_GAMEPAD_AXIS_LEFT_TRIGGER, kGachette + SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,
+    SDL_GAMEPAD_BUTTON_BACK, SDL_GAMEPAD_BUTTON_START, SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK,
+    SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT};
+constexpr const char* kPadNoms[16] = {"a", "b", "x", "y", "lb", "rb", "lt", "rt", "back", "start", "ls", "rs",
+                                      "haut", "bas", "gauche", "droite"};
+std::array<int, 16> g_source = kDefaut;
+constexpr int kSeuilGachette = 30 * 32767 / 255;   // gâchette physique vue comme un bouton : seuil XINPUT (30 sur 255)
+
 int16_t FlipY(int16_t v) { return v == -32768 ? 32767 : int16_t(-v); }   // SDL : bas positif ; XINPUT : haut positif
 uint8_t Trigger(int16_t v) { return v <= 0 ? 0 : uint8_t((int(v) * 255 + 16383) / 32767); }
 // Zone morte radiale : amplitude <= zm -> repos ; au-delà, (amplitude - zm) / (1 - zm) dans la même direction.
@@ -45,25 +60,35 @@ void ZoneMorte(int16_t* x, int16_t* y, float zm) {
 }
 }  // namespace
 
-Pad MapPad(const int16_t axes[6], uint32_t buttons, const uint8_t* keys, float zoneMorte) {
+Pad MapPad(const int16_t axesPhys[6], uint32_t boutonsPhys, const bool* keys, float zoneMorte) {
+    // Option [manette] : boutons et gâchettes physiques -> boutons du jeu (numérotés comme SDL), avant XINPUT
+    int16_t axes[6];
+    std::copy(axesPhys, axesPhys + 6, axes);
+    uint32_t buttons = 0;
+    for (int i = 0; i < 16; i++) {
+        const int s = g_source[i], d = kDefaut[i];
+        const int v = s < 0 ? 0 : s >= kGachette ? axesPhys[s - kGachette] : (boutonsPhys >> s & 1) * 32767;
+        if (d >= kGachette) axes[d - kGachette] = int16_t(v);
+        else if (v > kSeuilGachette) buttons |= 1u << d;
+    }
     static const struct { int sdl; uint16_t x; } kButtons[] = {
-        {SDL_CONTROLLER_BUTTON_A, kA}, {SDL_CONTROLLER_BUTTON_B, kB}, {SDL_CONTROLLER_BUTTON_X, kX},
-        {SDL_CONTROLLER_BUTTON_Y, kY}, {SDL_CONTROLLER_BUTTON_BACK, kBack}, {SDL_CONTROLLER_BUTTON_START, kStart},
-        {SDL_CONTROLLER_BUTTON_LEFTSTICK, kLThumb}, {SDL_CONTROLLER_BUTTON_RIGHTSTICK, kRThumb},
-        {SDL_CONTROLLER_BUTTON_LEFTSHOULDER, kLB}, {SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, kRB},
-        {SDL_CONTROLLER_BUTTON_DPAD_UP, kUp}, {SDL_CONTROLLER_BUTTON_DPAD_DOWN, kDown},
-        {SDL_CONTROLLER_BUTTON_DPAD_LEFT, kLeft}, {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, kRight}};
+        {SDL_GAMEPAD_BUTTON_SOUTH, kA}, {SDL_GAMEPAD_BUTTON_EAST, kB}, {SDL_GAMEPAD_BUTTON_WEST, kX},
+        {SDL_GAMEPAD_BUTTON_NORTH, kY}, {SDL_GAMEPAD_BUTTON_BACK, kBack}, {SDL_GAMEPAD_BUTTON_START, kStart},
+        {SDL_GAMEPAD_BUTTON_LEFT_STICK, kLThumb}, {SDL_GAMEPAD_BUTTON_RIGHT_STICK, kRThumb},
+        {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, kLB}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, kRB},
+        {SDL_GAMEPAD_BUTTON_DPAD_UP, kUp}, {SDL_GAMEPAD_BUTTON_DPAD_DOWN, kDown},
+        {SDL_GAMEPAD_BUTTON_DPAD_LEFT, kLeft}, {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, kRight}};
     Pad p;
     for (auto& b : kButtons)
         if (buttons >> b.sdl & 1) p.buttons |= b.x;
-    p.lx = axes[SDL_CONTROLLER_AXIS_LEFTX];
-    p.ly = FlipY(axes[SDL_CONTROLLER_AXIS_LEFTY]);
-    p.rx = axes[SDL_CONTROLLER_AXIS_RIGHTX];
-    p.ry = FlipY(axes[SDL_CONTROLLER_AXIS_RIGHTY]);
+    p.lx = axes[SDL_GAMEPAD_AXIS_LEFTX];
+    p.ly = FlipY(axes[SDL_GAMEPAD_AXIS_LEFTY]);
+    p.rx = axes[SDL_GAMEPAD_AXIS_RIGHTX];
+    p.ry = FlipY(axes[SDL_GAMEPAD_AXIS_RIGHTY]);
     ZoneMorte(&p.lx, &p.ly, zoneMorte);
     ZoneMorte(&p.rx, &p.ry, zoneMorte);
-    p.lt = Trigger(axes[SDL_CONTROLLER_AXIS_TRIGGERLEFT]);
-    p.rt = Trigger(axes[SDL_CONTROLLER_AXIS_TRIGGERRIGHT]);
+    p.lt = Trigger(axes[SDL_GAMEPAD_AXIS_LEFT_TRIGGER]);
+    p.rt = Trigger(axes[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER]);
     if (!keys) return p;
 
     for (auto& k : g_keyButtons)
@@ -102,6 +127,25 @@ int SetKeyBindings(const std::map<std::string, std::string>& bindings) {
             for (int d = 0; d < 4; d++)
                 if (name == std::string(s ? "stick_droit_" : "stick_gauche_") + kDirs[d]) { g_stick[s][d] = sc; done = true; }
         applied += done;
+    }
+    return applied;
+}
+
+int SetPadBindings(const std::map<std::string, std::string>& bindings) {
+    g_source = kDefaut;
+    int applied = 0;
+    for (auto& [name, bouton] : bindings) {
+        int i = 0;
+        while (i < 16 && name != kPadNoms[i]) i++;
+        const SDL_GamepadButton b = SDL_GetGamepadButtonFromString(bouton.c_str());
+        const SDL_GamepadAxis a = SDL_GetGamepadAxisFromString(bouton.c_str());
+        const bool gachette = a == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || a == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+        if (i == 16 || (bouton != "aucun" && b == SDL_GAMEPAD_BUTTON_INVALID && !gachette)) {
+            fprintf(stderr, "[config] [manette] %s : bouton « %s » inconnu\n", name.c_str(), bouton.c_str());
+            continue;
+        }
+        g_source[i] = bouton == "aucun" ? -1 : gachette ? kGachette + a : int(b);
+        applied++;
     }
     return applied;
 }

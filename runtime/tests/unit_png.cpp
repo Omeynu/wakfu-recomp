@@ -37,6 +37,17 @@ int main() {
         VERIF(t[((8 + 0) * w + 8 + 12 + 6) * 4] == 255);   // « é » ligne 0 : 00010 -> colonne 3 (x 6..7)
         const auto m = TexteRgba("Capture effectu\xc3\xa9" "e", 3, &w, &h);
         VERIF(WritePng("unit_png_texte.png", w, h, m));
+        // chiffres et signes de l'affichage des performances ; « 0 » ligne 2 : 10011 -> colonne 3 allumée
+        const auto c = TexteRgba("0123456789 ,./:%", 1, &w, &h);
+        VERIF(w == 16 * 6 - 1 + 8 && c[((4 + 2) * w + 4 + 3) * 4] == 255 && c[((4 + 2) * w + 4 + 1) * 4] == 24);
+        const auto ch = TexteRgba("60,0 img/s  GPU 3,41 ms  CPU 4,02 ms", 3, &w, &h);
+        VERIF(WritePng("unit_png_chiffres.png", w, h, ch));
+        // notification de succès : accents du français, caractère de 3 octets (« ’ ») compté comme une espace
+        const auto s = TexteRgba("L\xe2\x80\x99\xc3\x89lu", 1, &w, &h);
+        VERIF(w == 5 * 6 - 1 + 8 && s[((4 + 0) * w + 4 + 6 + 2) * 4] == 24);   // 2e caractère : espace
+        VERIF(s[((4 + 0) * w + 4 + 12 + 3) * 4] == 255);                       // « É » ligne 0 : 00010
+        const auto su = TexteRgba("Succ\xc3\xa8s d\xc3\xa9" "bloqu\xc3\xa9 : L'Elu ? Qui est qui ! (A deux, c'est mieux)", 3, &w, &h);
+        VERIF(WritePng("unit_png_succes.png", w, h, su));
     }
     printf(g_fail ? "unit_png : %d échec(s)\n" : "unit_png : OK\n", g_fail);
     return g_fail != 0;

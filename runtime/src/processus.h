@@ -1,4 +1,4 @@
-// Processus invité : module XEX, threads (contexte, PCR, KTHREAD, TLS).
+// Processus invité (pas « process.h » : nom pris par l'en-tête Windows inclus par SDL3) : module XEX, threads (contexte, PCR, KTHREAD, TLS).
 #pragma once
 #include <cstdint>
 #include "guest.h"

@@ -7,8 +7,8 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
-#ifdef WAKFU_HAS_SDL2
-#include <SDL.h>
+#ifdef WAKFU_HAS_SDL3
+#include <SDL3/SDL.h>
 #endif
 
 namespace wk::audio {
@@ -31,17 +31,19 @@ void DownmixToStereo(const uint8_t* in, float* out) {
     }
 }
 
-#ifdef WAKFU_HAS_SDL2
+#ifdef WAKFU_HAS_SDL3
 namespace {
-SDL_AudioDeviceID g_device = 0;
+SDL_AudioStream* g_device = nullptr;
 // File stéréo 48 kHz servie par le rappel du périphérique ; bilan pour le journal (Releve)
 std::mutex g_mutex;
 std::deque<float> g_file;
 bool g_demarre = false;   // première trame reçue : avant, une file vide n'est pas une sous-alimentation
 Bilan g_bilan;
-void Rappel(void*, Uint8* flux, int octets) {
-    float* out = reinterpret_cast<float*>(flux);
-    const size_t nb = size_t(octets) / sizeof(float);
+// Appelé quand le périphérique demande des données (comme le rappel SDL2) : octets demandés, complétés de silence.
+void Rappel(void*, SDL_AudioStream* flux, int octets, int) {
+    if (octets <= 0) return;
+    float out[16384];   // bloc de 1024 trames stéréo (plus si conversion de fréquence) ; au-delà, reste au prochain appel
+    const size_t nb = std::min(size_t(octets) / sizeof(float), sizeof out / sizeof(float));
     std::lock_guard<std::mutex> l(g_mutex);
     const size_t k = std::min(nb, g_file.size());
     std::copy_n(g_file.begin(), k, out);
@@ -53,36 +55,36 @@ void Rappel(void*, Uint8* flux, int octets) {
         g_bilan.sousAlimentations++;
         g_bilan.manquants += (nb - k) / 2;
     }
+    SDL_PutAudioStreamData(flux, out, int(nb * sizeof(float)));
 }
 }  // namespace
 
 bool Open() {
     // Statique locale (initialisation unique, thread-safe) plutôt que std::call_once, introuvable sous MinGW + Clang.
     static const bool opened = [] {
-        if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+        if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
             fprintf(stderr, "[audio] SDL : %s (pas de son)\n", SDL_GetError());
             return false;
         }
-        SDL_AudioSpec want{}, have{};
-        want.freq = kRate;
-        want.format = AUDIO_F32SYS;
-        want.channels = 2;
+        const SDL_AudioSpec want{SDL_AUDIO_F32, 2, kRate};
         // 1024 échantillons (21 ms) par appel du périphérique : le quantum par défaut de PipeWire ; 256 forçait tout
         // le graphe PipeWire à 5 ms (réveils fréquents, décrochages sur un portable chargé)
-        want.samples = 1024;
-        want.callback = Rappel;
+        SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "1024");
         // Conversion éventuelle (fréquence, format) assurée par SDL : la file reste en 48 kHz stéréo flottant.
-        g_device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+        g_device = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &want, Rappel, nullptr);
         if (!g_device) {
             fprintf(stderr, "[audio] périphérique : %s (pas de son)\n", SDL_GetError());
             return false;
         }
-        fprintf(stderr, "[audio] sortie %s, %d Hz, %d échantillons par appel\n", SDL_GetCurrentAudioDriver(), have.freq, have.samples);
-        SDL_PauseAudioDevice(g_device, 0);
+        SDL_AudioSpec have{};
+        int trames = 0;
+        SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(g_device), &have, &trames);
+        fprintf(stderr, "[audio] sortie %s, %d Hz, %d échantillons par appel\n", SDL_GetCurrentAudioDriver(), have.freq, trames);
+        SDL_ResumeAudioStreamDevice(g_device);
         return true;
     }();
     (void)opened;
-    return g_device != 0;
+    return g_device != nullptr;
 }
 
 void Submit(const float* mix) {

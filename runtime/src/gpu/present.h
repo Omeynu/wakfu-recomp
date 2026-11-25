@@ -15,5 +15,9 @@ void PresentFrameImage(VkImage image, uint32_t w, uint32_t h, uint32_t drawableW
 void PresentResize();
 // Capture écrite (touche_capture) : « Capture effectuée » affiché 2 s en haut à gauche de la fenêtre. Tout fil.
 void AnnoncerCapture();   // taille de la fenêtre changée : chaîne d'échange recréée à la prochaine image
+// Option afficher_perfs : texte affiché en haut à droite jusqu'au suivant (vide : rien). Tout fil.
+void AfficherPerfs(const std::string& texte);
+// Option notifications_succes : texte affiché 4 s en haut, au centre. Tout fil.
+void AnnoncerSucces(const std::string& texte);
 
 }  // namespace wk::gpu

@@ -4,7 +4,7 @@
 #include "strings.h"
 #include <cstdio>
 #include <cstring>
-#include "../process.h"
+#include "../processus.h"
 #include "stub.h"
 
 namespace wk {

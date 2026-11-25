@@ -18,7 +18,7 @@ XenonRecomp (patché)          commit ddd128bc        MIT                       
   libmspack                   1.11                   LGPL-2.1                         décompression LZX (dans XenonRecomp.exe
                                                                                         et wakfu-prepare.exe, liaison statique)
 glslang                       15.1.0                 BSD-3 / BSD-2 / MIT / Apache-2.0 shaders de présentation (lié à wakfu.exe)
-SDL2                          2.32.10                zlib                             fenêtre, son, manette (lié à wakfu.exe)
+SDL3                          3.4.20                 zlib                             fenêtre, son, manette (lié à wakfu.exe)
                                                                                         et fenêtre du lanceur (amorce)
 FFmpeg (libavcodec, libavutil) 7.1.2                 LGPL-2.1 ou ultérieure           décodage XMA (lié statiquement à wakfu.exe)
 Vulkan-Headers                1.4.309                Apache-2.0 / MIT                 en-têtes Vulkan

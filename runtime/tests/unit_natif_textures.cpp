@@ -9,6 +9,7 @@
 #include <random>
 #include <vector>
 #include "../src/guest.h"
+#include "../src/natif/icones.h"
 #include "../src/natif/textures.h"
 
 namespace wk { uint8_t* g_base = nullptr; }
@@ -123,6 +124,30 @@ int main() {
     Constante(f, 63, 64, 64, 64, true, 0);
     Attendu("format 63 refusé", Disposer(f, &d), 0);
 
+    // Option [entrees] icones : seules les icônes du jeu reconnues sont remplacées, et seulement en mode PlayStation
+    {
+        Disposition di;
+        di.format = 6, di.niveaux = 2, di.n[0].w = di.n[0].h = 30, di.n[1].w = di.n[1].h = 15;
+        std::vector<uint8_t> px(30 * 30 * 4 + 15 * 15 * 4, 0x5A);
+        const uint32_t debut[2] = {0, 30 * 30 * 4};
+        Attendu("icône : mode Xbox, rien", RemplacerIcone(di, px.data(), debut), 0);
+        ChoisirIcones(true);
+        Attendu("icône inconnue : rien", RemplacerIcone(di, px.data(), debut), 0);
+        Attendu("icône inconnue : texels gardés", px[100], 0x5A);
+        ChoisirIcones(false);
+        // dessin d'une croix 30 x 30 : disque opaque, coins transparents, centre bleu (BGRA : bleu > rouge)
+        std::vector<uint8_t> im(30 * 30 * 4, 0);
+        DessinerIcone(0, im.data(), 30, 30, 0, 0, 30, 30);
+        const uint8_t* c = &im[(15 * 30 + 15) * 4];
+        Attendu("croix : centre opaque", c[3], 255);
+        Attendu("croix : centre bleu", c[0] > c[2], 1);
+        Attendu("croix : coin transparent", im[3], 0);
+        // étiquette L1 : bord sombre, fond parchemin, texte encré au milieu
+        std::vector<uint8_t> et(50 * 26 * 4, 0);
+        DessinerIcone(4, et.data(), 50, 26, 1, 1, 48, 22);
+        Attendu("L1 : hors emprise transparent", et[(25 * 50 + 25) * 4 + 3], 0);
+        Attendu("L1 : fond opaque", et[(5 * 50 + 25) * 4 + 3], 255);
+    }
     printf("%u cas, %u échecs : %s\n", g_cas, g_echecs, g_echecs ? "ÉCHEC" : "OK");
     return g_echecs ? 1 : 0;
 }

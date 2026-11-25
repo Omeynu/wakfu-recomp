@@ -45,7 +45,11 @@ jobs:
       - name: Host tools
         # the launcher embeds its font with --embed-dir (Clang 19+); Ubuntu 24.04 defaults to Clang 18
         run: |
-          sudo apt-get update && sudo apt-get install -y clang-19 cmake ninja-build curl python3 zstd git libsdl2-dev zlib1g-dev libvulkan-dev
+          # X11 / Wayland / audio headers: build-paquet.sh builds the pinned SDL3 (static) for the launcher
+          sudo apt-get update && sudo apt-get install -y clang-19 cmake ninja-build curl python3 zstd git zlib1g-dev libvulkan-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+            libwayland-dev libdecor-0-dev libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev
           sudo ln -sf /usr/bin/clang-19 /usr/local/bin/clang && sudo ln -sf /usr/bin/clang++-19 /usr/local/bin/clang++
           clang --version | head -1
       - name: Build the Linux launcher

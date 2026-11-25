@@ -1,4 +1,4 @@
-// Fenêtre du lanceur (WakfuRecomp.exe sans argument) : Dear ImGui sur SDL2 avec le rendu 2D de SDL (SDL_Renderer).
+// Fenêtre du lanceur (WakfuRecomp.exe sans argument) : Dear ImGui sur SDL3 avec le rendu 2D de SDL (SDL_Renderer).
 // Premier lancement : accueil -> choix du jeu et de la mise à jour -> vérification -> recompilation -> réglages -> Jouer.
 // Ensuite : écran Jouer (réglages, recompiler). Les étapes sont celles de la ligne de commande (installer.h),
 // exécutées dans un fil de travail ; leur sortie va dans <dossier de travail>\journal-lanceur.txt.
@@ -14,11 +14,11 @@
 #include <unistd.h>
 #include <zlib.h>
 #endif
-#include <SDL.h>
-#include <SDL_syswm.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include <imgui.h>
-#include <imgui_impl_sdl2.h>
-#include <imgui_impl_sdlrenderer2.h>
+#include <imgui_impl_sdl3.h>
+#include <imgui_impl_sdlrenderer3.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -33,7 +33,7 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
-#include "../../runtime/src/config.h"   // pas de -I runtime/src : son process.h masquerait celui du système
+#include "../../runtime/src/config.h"   // pas de -I runtime/src : ses en-têtes ne doivent pas masquer ceux du système
 #include "installer.h"
 #include "../../runtime/src/png.h"
 #include "textes.h"
@@ -418,6 +418,13 @@ const Commande kCommandes[] = {
     { "stick_gauche_droite", T_CmdSgD, "D" }, { "stick_droit_haut", T_CmdSdH, "I" }, { "stick_droit_bas", T_CmdSdB, "K" },
     { "stick_droit_gauche", T_CmdSdG, "J" }, { "stick_droit_droite", T_CmdSdD, "L" },
 };
+// Option [manette] : bouton du jeu -> bouton physique (noms SDL3, défaut : même bouton)
+const Commande kBoutons[] = {
+    { "a", T_CmdA, "a" }, { "b", T_CmdB, "b" }, { "x", T_CmdX, "x" }, { "y", T_CmdY, "y" },
+    { "lb", T_CmdLb, "leftshoulder" }, { "rb", T_CmdRb, "rightshoulder" }, { "lt", T_CmdLt, "lefttrigger" }, { "rt", T_CmdRt, "righttrigger" },
+    { "back", T_CmdBack, "back" }, { "start", T_CmdStart, "start" }, { "ls", T_CmdClicG, "leftstick" }, { "rs", T_CmdClicD, "rightstick" },
+    { "haut", T_CmdHaut, "dpup" }, { "bas", T_CmdBas, "dpdown" }, { "gauche", T_CmdGauche, "dpleft" }, { "droite", T_CmdDroite, "dpright" },
+};
 
 struct App
 {
@@ -437,6 +444,7 @@ struct App
     cfg::Config c;
     std::string erreurConfig;
     int attenteTouche = -1;          // commande en attente d'une touche (onglet Clavier)
+    int attenteBouton = -1;          // bouton du jeu en attente d'un bouton de manette (onglet Manette)
     int ongletForce = -1;            // capture : onglet à afficher
     Image fond, keyart;
     bool imagesChargees = false;
@@ -687,10 +695,11 @@ struct App
 
     void deposer(const fs::path& p)   // glisser-déposer : champ sous le curseur (pour un refus), sinon aucun
     {
-        int gx, gy, wx, wy;
+        float gx, gy;
+        int wx, wy;
         SDL_GetGlobalMouseState(&gx, &gy);
         SDL_GetWindowPosition(win, &wx, &wy);
-        ImVec2 m(float(gx - wx), float(gy - wy));
+        ImVec2 m(gx - float(wx), gy - float(wy));
         int voulu = -1;
         for (int i = 0; i < 2; ++i)
             if (m.x >= zoneMin[i].x && m.y >= zoneMin[i].y && m.x < zoneMax[i].x && m.y < zoneMax[i].y) voulu = i;
@@ -704,9 +713,7 @@ struct App
         std::wstring titre = fromU8(tr(voulu == 0 ? T_DialogueJeu : T_DialogueMaj)).wstring();
         OPENFILENAMEW o{};
         o.lStructSize = sizeof o;
-        SDL_SysWMinfo wm;
-        SDL_VERSION(&wm.version);
-        if (SDL_GetWindowWMInfo(win, &wm)) o.hwndOwner = wm.info.win.window;
+        o.hwndOwner = HWND(SDL_GetPointerProperty(SDL_GetWindowProperties(win), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
         o.lpstrFilter = L"*.*\0*.*\0";
         o.lpstrFile = nom;
         o.nMaxFile = 4096;
@@ -1153,12 +1160,15 @@ struct App
         ligneReglage(tr(T_Ecran), tr(T_EcranAide));
         {
             std::vector<std::pair<int, std::string>> t;
-            const int n = std::max(SDL_GetNumVideoDisplays(), c.screen + 1);
+            int nb = 0;
+            SDL_DisplayID* ids = SDL_GetDisplays(&nb);
+            const int n = std::max(nb, c.screen + 1);
             for (int i = 0; i < n; ++i)
             {
-                const char* nom = SDL_GetDisplayName(i);
+                const char* nom = i < nb ? SDL_GetDisplayName(ids[i]) : nullptr;
                 t.push_back({ i, fmt("%d : %s", i + 1, nom ? nom : "?") });
             }
+            SDL_free(ids);
             if (liste<int>("##ecran", &c.screen, t)) c.posX.reset(), c.posY.reset();   // autre écran : fenêtre centrée
         }
         ligneReglage(tr(T_Taille), tr(T_TailleAide));
@@ -1214,6 +1224,8 @@ struct App
         ligneReglage(tr(T_Msaa), tr(T_MsaaAide));
         liste<std::string>("##msaa", &c.msaa, { { "auto", tr(T_MsaaAuto) }, { "desactive", tr(T_Desactive) }, { "2x", "x2" }, { "4x", "x4" }, { "8x", "x8" },
             { "active", tr(T_Active) } });
+        ligneReglage(tr(T_AaTransparence), tr(T_AaTransparenceAide));
+        ImGui::Checkbox("##aatransp", &c.anticrenelageTransparence);
         ligneReglage(tr(T_Anisotrope), tr(T_AnisotropeAide));
         liste<int>("##aniso", &c.anisotropy, { { 1, "x1" }, { 2, "x2" }, { 4, "x4" }, { 8, "x8" }, { 16, "x16" } });
         ligneReglage(tr(T_Ombres), tr(T_OmbresAide));
@@ -1228,6 +1240,9 @@ struct App
         ImGui::SliderFloat("##gamma", &c.gamma, 0.5f, 3.0f, "%.2f");
         ligneReglage(tr(T_CouleurXbox), tr(T_CouleurXboxAide));
         ImGui::Checkbox("##xbox", &c.xboxColor);
+        ligneReglage(tr(T_Daltonisme), tr(T_DaltonismeAide));
+        liste<std::string>("##dalton", &c.daltonisme, { { "aucun", tr(T_AaAucun) }, { "protanopie", tr(T_Protanopie) },
+            { "deuteranopie", tr(T_Deuteranopie) }, { "tritanopie", tr(T_Tritanopie) } });
         ImGui::EndTable();
     }
 
@@ -1261,6 +1276,8 @@ struct App
             if (liste<std::string>(j ? "##joueur2" : "##joueur1", &c.joueurs[j], t) && c.joueurs[j] == c.joueurs[1 - j])
                 c.joueurs[1 - j] = avant;   // même commande que l'autre joueur : échange
         }
+        ligneReglage(tr(T_Icones), tr(T_IconesAide));
+        liste<std::string>("##icones", &c.icones, { { "auto", tr(T_IconesAuto) }, { "xbox", "Xbox" }, { "playstation", "PlayStation" } });
         ligneReglage(tr(T_PasserLogos), tr(T_PasserLogosAide));
         ImGui::Checkbox("##logos", &c.skipLogos);
         ligneReglage(tr(T_ToucheCapture), tr(T_ToucheCaptureAide));
@@ -1273,6 +1290,10 @@ struct App
             if (!connue) t.insert(t.begin(), { c.captureKey, c.captureKey });   // touche écrite à la main dans config.toml
             liste<std::string>("##capture", &c.captureKey, t);
         }
+        ligneReglage(tr(T_AfficherPerfs), tr(T_AfficherPerfsAide));
+        ImGui::Checkbox("##perfs", &c.afficherPerfs);
+        ligneReglage(tr(T_NotifSucces), tr(T_NotifSuccesAide));
+        ImGui::Checkbox("##succes", &c.notificationsSucces);
         ligneReglage(tr(T_Langue), tr(T_LangueAide));
         liste<std::string>("##langue", &c.langue, { { "auto", tr(T_LangueAuto) }, { "fr", "Français" }, { "en", "English" },
             { "de", "Deutsch" }, { "es", "Español" }, { "it", "Italiano" }, { "ja", "Japanese" } });
@@ -1325,6 +1346,53 @@ struct App
         ImGui::EndTable();
     }
 
+    void ongletManette()
+    {
+        texteDoux(tr(T_ManetteAide), 14);
+        ImGui::Dummy(ImVec2(0, S(4)));
+        if (!ImGui::BeginTable("boutons", 4, ImGuiTableFlags_SizingStretchProp)) return;
+        ImGui::TableSetupColumn("c1", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("t1", ImGuiTableColumnFlags_WidthFixed, S(170));
+        ImGui::TableSetupColumn("c2", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("t2", ImGuiTableColumnFlags_WidthFixed, S(170));
+        const int n = int(std::size(kBoutons)), moitie = (n + 1) / 2;
+        for (int r = 0; r < moitie; ++r)
+        {
+            ImGui::TableNextRow();
+            for (int k : { r, r + moitie })
+            {
+                ImGui::TableNextColumn();
+                if (k >= n) { ImGui::TableNextColumn(); continue; }
+                const Commande& cm = kBoutons[k];
+                police(g_regular, 15);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted(tr(cm.texte));
+                finPolice();
+                ImGui::TableNextColumn();
+                auto it = c.pad.find(cm.nom);
+                std::string lib = attenteBouton == k ? tr(T_AppuyerBouton)
+                                : it == c.pad.end() ? fmt(tr(T_ParDefaut), cm.defaut)
+                                : it->second == "aucun" ? tr(T_AucunBouton) : it->second;
+                bool perso = it != c.pad.end();
+                float wb = perso ? ImGui::GetContentRegionAvail().x - ImGui::GetFrameHeight() - S(4) : -FLT_MIN;
+                ImGui::PushStyleColor(ImGuiCol_Button, rgb(attenteBouton == k ? kOrangeFonce : perso ? kSecondaireClair : kChamp));
+                police(perso ? g_semibold : g_regular, 14);
+                if (ImGui::Button(fmt("%s##m%d", lib.c_str(), k).c_str(), ImVec2(wb, 0))) attenteBouton = attenteBouton == k ? -1 : k;
+                finPolice();
+                ImGui::PopStyleColor();
+                if (perso)
+                {
+                    ImGui::SameLine(0, S(4));
+                    if (ImGui::Button(fmt("\xC3\x97##mr%d", k).c_str(), ImVec2(ImGui::GetFrameHeight(), 0))) c.pad.erase(cm.nom);   // ×
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(T_BoutonDefaut));
+                }
+            }
+        }
+        ImGui::EndTable();
+        ImGui::Dummy(ImVec2(0, S(6)));
+        if (bouton(tr(T_ReinitialiserManette), false)) { c.pad.clear(); attenteBouton = -1; }
+    }
+
     void ecranReglages()
     {
         carte("reglages", 40);
@@ -1348,14 +1416,15 @@ struct App
         ImGui::Dummy(ImVec2(0, S(4)));
         if (ImGui::BeginTabBar("onglets"))
         {
-            const Texte noms[] = { T_OngletAffichage, T_OngletImage, T_OngletSonManette, T_OngletClavier };
-            for (int i = 0; i < 4; ++i)
+            const Texte noms[] = { T_OngletAffichage, T_OngletImage, T_OngletSonManette, T_OngletClavier, T_OngletManette };
+            for (int i = 0; i < 5; ++i)
             {
                 police(g_semibold, 16);
                 bool ouvert = ImGui::BeginTabItem(tr(noms[i]), nullptr, ongletForce == i ? ImGuiTabItemFlags_SetSelected : 0);
                 finPolice();
                 if (!ouvert) continue;
                 if (i != 3) attenteTouche = -1;
+                if (i != 4) attenteBouton = -1;
                 float h = ImGui::GetWindowHeight() - ImGui::GetCursorPosY() - S(34) - S(44) - S(16);
                 ImGui::BeginChild("defil", ImVec2(0, h));
                 ImGui::Dummy(ImVec2(0, S(6)));
@@ -1363,6 +1432,7 @@ struct App
                 if (i == 1) ongletImage();
                 if (i == 2) ongletSon();
                 if (i == 3) ongletClavier();
+                if (i == 4) ongletManette();
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
@@ -1370,6 +1440,7 @@ struct App
         }
         int b = piedCarte(tr(T_Annuler), tr(finRecompilation ? T_Continuer : T_Enregistrer), true, tr(T_Defauts));
         if (b == 3) c = cfg::Config();
+        if (b != 0) attenteBouton = -1;
         if (b == 1) { attenteTouche = -1; chargerReglages(); erreurConfig.clear(); ecran = retourReglages; finRecompilation = false; }
         if (b == 2 && enregistrerReglages()) { attenteTouche = -1; ecran = retourReglages; finRecompilation = false; }
         finCarte();
@@ -1804,10 +1875,14 @@ struct App
 
     void enregistrerCapture(const std::string& nom)
     {
-        int w, h;
-        SDL_GetRendererOutputSize(ren, &w, &h);
+        SDL_Surface* lu = SDL_RenderReadPixels(ren, nullptr);
+        SDL_Surface* s = lu ? SDL_ConvertSurface(lu, SDL_PIXELFORMAT_RGBA32) : nullptr;
+        SDL_DestroySurface(lu);
+        if (!s) { journal(std::string("capture : ") + SDL_GetError()); return; }
+        const int w = s->w, h = s->h;
         std::vector<uint8_t> px(size_t(w) * h * 4);
-        if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGBA32, px.data(), w * 4) != 0) { journal(std::string("capture : ") + SDL_GetError()); return; }
+        for (int y = 0; y < h; ++y) std::memcpy(&px[size_t(y) * w * 4], static_cast<uint8_t*>(s->pixels) + size_t(y) * s->pitch, size_t(w) * 4);
+        SDL_DestroySurface(s);
         for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
         fs::path p = dossierCapture / ((langueFr() ? "fr-" : "en-") + nom + ".png");
         if (!WritePng(u8(p), uint32_t(w), uint32_t(h), px)) journal("capture : écriture impossible " + u8(p));
@@ -1910,7 +1985,8 @@ struct App
         pas.push_back({ "14-reglages-image", [this] { ongletForce = 1; }, aucun });
         pas.push_back({ "15-reglages-son-manette", [this] { ongletForce = 2; }, aucun });
         pas.push_back({ "16-reglages-clavier", [this] { ongletForce = 3; c.keys["a"] = "Space"; attenteTouche = 5; }, aucun });
-        pas.push_back({ "17-jouer", [this] { ongletForce = -1; attenteTouche = -1; c.keys.clear(); ecran = Ecran::Jouer; }, aucun });
+        pas.push_back({ "16b-reglages-manette", [this] { ongletForce = 4; attenteTouche = -1; c.pad["a"] = "b"; c.pad["y"] = "aucun"; attenteBouton = 4; }, aucun });
+        pas.push_back({ "17-jouer", [this] { ongletForce = -1; attenteTouche = -1; attenteBouton = -1; c.keys.clear(); c.pad.clear(); ecran = Ecran::Jouer; }, aucun });
         pas.push_back({ "18-jouer-plantage", [this] { codeJeu = 6; finJeu(); }, aucun });
         pas.push_back({ "19-confirmer-recompilation", [this] { messageJeu.clear(); confirmerRecompilation = true; }, aucun });
         pas.push_back({ "21-verification-cases", [this] {   // état simulé : vérification réussie (cases ménage / bureau)
@@ -1977,20 +2053,34 @@ struct App
             if (attendre ? SDL_WaitEventTimeout(&ev, 100) : SDL_PollEvent(&ev))
                 do
                 {
-                    if (ev.type == SDL_KEYDOWN && attenteTouche >= 0 && ecran == Ecran::Reglages)   // touche choisie pour une commande
+                    if (ev.type == SDL_EVENT_KEY_DOWN && attenteTouche >= 0 && ecran == Ecran::Reglages)   // touche choisie pour une commande
                     {
-                        const char* n = SDL_GetScancodeName(ev.key.keysym.scancode);
+                        const char* n = SDL_GetScancodeName(ev.key.scancode);
                         if (n && *n) c.keys[kCommandes[attenteTouche].nom] = n;
                         attenteTouche = -1;
                         continue;
                     }
-                    ImGui_ImplSDL2_ProcessEvent(&ev);
-                    if (ev.type == SDL_DROPFILE)
-                    {
-                        if (ecran == Ecran::Choix) deposer(fromU8(ev.drop.file));
-                        SDL_free(ev.drop.file);
+                    if (ev.type == SDL_EVENT_GAMEPAD_ADDED) SDL_OpenGamepad(ev.gdevice.which);   // onglet Manette
+                    const bool gachette = ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && ev.gaxis.value > 16384 &&
+                        (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+                    if ((ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || gachette) && attenteBouton >= 0 && ecran == Ecran::Reglages)
+                    {   // bouton choisi : nom SDL ; boutons de face par étiquette A B X Y, comme le jeu (kernel/window.cpp)
+                        const char* n = nullptr;
+                        if (gachette) n = SDL_GetGamepadStringForAxis(SDL_GamepadAxis(ev.gaxis.axis));
+                        else
+                        {
+                            const int l = SDL_GetGamepadButtonLabel(SDL_GetGamepadFromID(ev.gbutton.which), SDL_GamepadButton(ev.gbutton.button));
+                            n = SDL_GetGamepadStringForButton(l >= SDL_GAMEPAD_BUTTON_LABEL_A && l <= SDL_GAMEPAD_BUTTON_LABEL_Y
+                                ? SDL_GamepadButton(l - SDL_GAMEPAD_BUTTON_LABEL_A) : SDL_GamepadButton(ev.gbutton.button));
+                        }
+                        if (n && *n) c.pad[kBoutons[attenteBouton].nom] = n;
+                        if (n && kBoutons[attenteBouton].defaut == std::string(n)) c.pad.erase(kBoutons[attenteBouton].nom);   // même bouton : défaut
+                        attenteBouton = -1;
+                        continue;
                     }
-                    if (ev.type == SDL_QUIT || (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE))
+                    ImGui_ImplSDL3_ProcessEvent(&ev);
+                    if (ev.type == SDL_EVENT_DROP_FILE && ecran == Ecran::Choix) deposer(fromU8(ev.drop.data));
+                    if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED)
                     {
                         if (job != Job::Aucun) confirmerQuitter = true;
                         else quitter = true;
@@ -2004,15 +2094,15 @@ struct App
                 if (!jeuEnCours && (SDL_GetWindowFlags(win) & SDL_WINDOW_HIDDEN)) finJeu();
                 continue;
             }
-            ImGui_ImplSDLRenderer2_NewFrame();
-            ImGui_ImplSDL2_NewFrame();
+            ImGui_ImplSDLRenderer3_NewFrame();
+            ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
             image();
             ImGui::Render();
-            SDL_RenderSetScale(ren, ImGui::GetIO().DisplayFramebufferScale.x, ImGui::GetIO().DisplayFramebufferScale.y);
+            SDL_SetRenderScale(ren, ImGui::GetIO().DisplayFramebufferScale.x, ImGui::GetIO().DisplayFramebufferScale.y);
             SDL_SetRenderDrawColor(ren, 0x12, 0x0B, 0x07, 255);
             SDL_RenderClear(ren);
-            ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), ren);
+            ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), ren);
             if (cap) avancerCapture();
             SDL_RenderPresent(ren);
         }
@@ -2085,23 +2175,28 @@ int guiMain()
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 #endif
     SDL_SetMainReady();
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
-    SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) return erreurBoite(std::string("SDL_Init : ") + SDL_GetError());
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) return erreurBoite(std::string("SDL_Init : ") + SDL_GetError());
     App app;
     try
     {
-        g_s = std::clamp(ImGui_ImplSDL2_GetContentScaleForDisplay(0), 1.0f, 3.0f);
-        SDL_Rect ub;   // la fenêtre doit tenir dans l'écran (barre des tâches comprise)
-        if (SDL_GetDisplayUsableBounds(0, &ub) == 0 && ub.w > 0 && ub.h > 0)
-            g_s = std::max(1.0f, std::min({ g_s, ub.w / 1160.0f, ub.h / 740.0f }));
-        if (const char* e = std::getenv("WAKFURECOMP_ECHELLE")) g_s = std::clamp(float(std::atof(e)), 1.0f, 3.0f);
-        app.win = SDL_CreateWindow(tr(T_TitreFenetre), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, int(1120 * g_s), int(700 * g_s),
-                                   SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN);
+        app.win = SDL_CreateWindow(tr(T_TitreFenetre), 1120, 700, SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
         if (!app.win) return erreurBoite(std::string("SDL_CreateWindow : ") + SDL_GetError());
-        app.ren = SDL_CreateRenderer(app.win, -1, SDL_RENDERER_PRESENTVSYNC | SDL_RENDERER_ACCELERATED);
-        if (!app.ren) app.ren = SDL_CreateRenderer(app.win, -1, SDL_RENDERER_SOFTWARE);   // sans pilote graphique utilisable
+        // Tailles SDL3 : en pixels sous Windows et X11 (densité 1 ; 200 % -> échelle 2, fenêtre 2240 pixels), en points
+        // sous Wayland et macOS (pixels = points x densité). g_s : d'abord en pixels par unité, puis en unités de fenêtre.
+        const float d = std::max(1.0f, SDL_GetWindowPixelDensity(app.win));
+        g_s = std::clamp(SDL_GetWindowDisplayScale(app.win), 1.0f, 3.0f);
+        SDL_Rect ub;   // la fenêtre doit tenir dans l'écran (barre des tâches comprise)
+        if (SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &ub) && ub.w > 0 && ub.h > 0)
+            g_s = std::max(1.0f, std::min({ g_s, ub.w * d / 1160.0f, ub.h * d / 740.0f }));
+        if (const char* e = std::getenv("WAKFURECOMP_ECHELLE")) g_s = std::clamp(float(std::atof(e)), 1.0f, 3.0f);
+        g_s /= d;
+        SDL_SetWindowSize(app.win, int(1120 * g_s), int(700 * g_s));
+        SDL_SetWindowPosition(app.win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        SDL_ShowWindow(app.win);
+        app.ren = SDL_CreateRenderer(app.win, nullptr);
+        if (!app.ren) app.ren = SDL_CreateRenderer(app.win, SDL_SOFTWARE_RENDERER);   // sans pilote graphique utilisable
         if (!app.ren) return erreurBoite(std::string("SDL_CreateRenderer : ") + SDL_GetError());
+        SDL_SetRenderVSync(app.ren, 1);
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
@@ -2116,8 +2211,8 @@ int guiMain()
         g_semibold = policeRessource(kInterSemiBold, sizeof kInterSemiBold);
 #endif
         appliquerTheme();
-        ImGui_ImplSDL2_InitForSDLRenderer(app.win, app.ren);
-        ImGui_ImplSDLRenderer2_Init(app.ren);
+        ImGui_ImplSDL3_InitForSDLRenderer(app.win, app.ren);
+        ImGui_ImplSDLRenderer3_Init(app.ren);
         app.demarrer();
         app.boucle();
     }
@@ -2129,8 +2224,8 @@ int guiMain()
         if (app.fil.joinable()) app.fil.join();
         return 1;
     }
-    ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
     SDL_DestroyRenderer(app.ren);
     SDL_DestroyWindow(app.win);

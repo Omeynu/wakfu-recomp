@@ -1,8 +1,8 @@
 # Lanceur WakfuRecomp (Windows : WakfuRecomp.exe, packaging/windows/build-installer.sh ; Linux : WakfuRecomp,
 # packaging/linux/build-paquet.sh). Tests : test_gen_imports (comparé à runtime/tools/gen_imports.py), test_suppression, test_migration, test_secours.
 # Lanceur : -Dzstd_DIR (bibliothèque statique), -DIMGUI_DIR (Dear ImGui), -DINTER_DIR (Inter-*.ttf),
-#           -DXENONRECOMP_DIR (TinySHA1, toml++ et xxHash de ses sous-modules) ; Windows : -DSDL2_DIR (statique),
-#           Linux : SDL2 et zlib du système, Clang (#embed).
+#           -DXENONRECOMP_DIR (TinySHA1, toml++ et xxHash de ses sous-modules) ; Windows : -DSDL3_DIR (statique),
+#           Linux : SDL3 et zlib du système, Clang (#embed).
 cmake_minimum_required(VERSION 3.20)
 project(wakfu_installer CXX)
 set(CMAKE_CXX_STANDARD 20)
@@ -24,22 +24,22 @@ set(R ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(SOURCES main.cpp gen_imports.cpp lanceur.cpp suppression.cpp textes.cpp verif.cpp
     ../wakfu-prepare/common.cpp ../wakfu-prepare/stfs.cpp ../wakfu-prepare/xiso.cpp ${R}/runtime/src/config.cpp ${R}/runtime/src/png.cpp
     ${IMGUI_DIR}/imgui.cpp ${IMGUI_DIR}/imgui_draw.cpp ${IMGUI_DIR}/imgui_tables.cpp ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_sdl2.cpp ${IMGUI_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
+    ${IMGUI_DIR}/backends/imgui_impl_sdl3.cpp ${IMGUI_DIR}/backends/imgui_impl_sdlrenderer3.cpp)
 if(WIN32)
     enable_language(RC)
-    find_package(SDL2 CONFIG REQUIRED)
+    find_package(SDL3 CONFIG REQUIRED)
     add_executable(wakfu-installer ${SOURCES} wakfu-installer.rc)
     target_include_directories(wakfu-installer PRIVATE $<$<COMPILE_LANGUAGE:RC>:${INTER_DIR}>)
-    target_link_libraries(wakfu-installer PRIVATE zstd::libzstd_static SDL2::SDL2-static comdlg32 ole32 windowscodecs uuid)
+    target_link_libraries(wakfu-installer PRIVATE zstd::libzstd_static SDL3::SDL3-static comdlg32 ole32 windowscodecs uuid)
     # Application à fenêtre (pas de console au double-clic) ; la ligne de commande ouvre ou rejoint une console.
     target_link_options(wakfu-installer PRIVATE -static -municode -mwindows)
 else()
-    find_package(SDL2 REQUIRED)
+    find_package(SDL3 CONFIG REQUIRED)
     find_package(ZLIB REQUIRED)   # lecture des images PNG du jeu
     add_executable(wakfu-installer ${SOURCES})
     set_target_properties(wakfu-installer PROPERTIES OUTPUT_NAME WakfuRecomp)
     target_compile_options(wakfu-installer PRIVATE -Wno-c23-extensions --embed-dir=${INTER_DIR})   # #embed des polices
-    target_link_libraries(wakfu-installer PRIVATE zstd::libzstd_static SDL2::SDL2 ZLIB::ZLIB)
+    target_link_libraries(wakfu-installer PRIVATE zstd::libzstd_static SDL3::SDL3 ZLIB::ZLIB)
 endif()
 target_include_directories(wakfu-installer PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/../wakfu-prepare;${IMGUI_DIR};${IMGUI_DIR}/backends;${XENONRECOMP_DIR}/thirdparty/TinySHA1;${XENONRECOMP_DIR}/thirdparty/tomlplusplus/include;${XENONRECOMP_DIR}/thirdparty/xxHash>)

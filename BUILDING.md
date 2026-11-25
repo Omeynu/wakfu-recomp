@@ -25,11 +25,12 @@ The Linux launcher is the same program as `WakfuRecomp.exe`. It is built by:
 packaging/linux/build-paquet.sh <output dir>    # -> WakfuRecomp-linux.tar.zst
 ```
 
-Host requirements: git, tar, zstd, curl, python3, clang ≥ 19 (`--embed-dir`), cmake, ninja, SDL2, zlib and Vulkan headers, network access
+Host requirements: git, tar, zstd, curl, python3, clang ≥ 19 (`--embed-dir`), cmake, ninja, zlib and Vulkan headers, X11/Wayland and audio development headers (the pinned SDL3 is built statically into the launcher), network access
 (XenonRecomp, XenosRecomp and DXC at the versions in `tools.lock`; zstd, Dear ImGui and Inter at the versions in
 `packaging/windows/deps.lock`). Extract the archive and run `WakfuRecomp/WakfuRecomp`: the window guides you
 through choosing the game files, recompiling and playing. On Arch-based distributions it can install the missing
-runtime packages (`clang cmake ninja pkgconf sdl2-compat vulkan-headers vulkan-icd-loader glslang ffmpeg`) with pacman; elsewhere it lists them.
+runtime packages (`clang cmake ninja pkgconf vulkan-headers vulkan-icd-loader glslang ffmpeg`) with pacman; elsewhere it lists them.
+Without a system SDL3, the launcher builds the official SDL3 archive shipped in the package (checksum verified) and links the game statically against it.
 Details (French): [`packaging/linux/LISEZMOI.txt`](packaging/linux/LISEZMOI.txt).
 
 ### What the launcher does

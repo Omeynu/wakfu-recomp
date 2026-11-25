@@ -11,7 +11,7 @@ intégrité (somme ou signature). Métadonnées lues par l'API publique de GitHu
 | llvm-mingw | github.com/mstorsjo/llvm-mingw | Martin Storsjö (auteur) | 3 030 | 20250114 (2025-01-14, CI du projet) | somme relevée au 1er téléchargement (pas de condensé publié) |
 | CMake | github.com/Kitware/CMake | Kitware | 8 164 | 3.31.6 (2025-02-24) | fichier SHA-256 publié par Kitware |
 | ninja | github.com/ninja-build/ninja | ninja-build | 13 364 | 1.12.1 (2024-05-11, jhasse, mainteneur) | somme relevée au 1er téléchargement |
-| SDL2 | github.com/libsdl-org/SDL | libsdl-org | 17 007 | 2.32.10 (2025-09-01, slouken, auteur) | condensé GitHub identique |
+| SDL3 | github.com/libsdl-org/SDL | libsdl-org | 17 061 | 3.4.20 (2026-11-03, slouken, auteur ; vérifiée le 2026-11-25, remplace SDL2 2.32.10) | condensé GitHub identique : `SDL3-3.4.20.tar.gz` SHA-256 `f3bb06f5…ef8581f` |
 | zstd | github.com/meta/zstd | Meta (ancien `facebook/zstd`, même dépôt id 29759715, renommage de l'organisation) | 28 256 | 1.5.7 (2025-02-19, Cyan4973, auteur) | fichier SHA-256 amont |
 | FFmpeg | ffmpeg.org (miroir github.com/FFmpeg/FFmpeg) | FFmpeg | 67 525 | 7.1.2 | signature GPG valide, clé de publication FCF9 86EA 15E6 E293 A564 4F10 B432 2F04 D676 58D8 ; somme identique |
 | glslang | github.com/KhronosGroup/glslang | Khronos Group | 3 618 | 15.1.0 (archive de tag) | somme relevée au 1er téléchargement |
@@ -20,12 +20,17 @@ intégrité (somme ou signature). Métadonnées lues par l'API publique de GitHu
 | Inter (police, OFL 1.1) | github.com/rsms/inter | Rasmus Andersson (auteur) | 20 087 | 4.1 (2024-11-16, rsms) | somme relevée au 1er téléchargement (pas de condensé publié pour cet envoi) |
 
 Fenêtre du lanceur (`tools-src/wakfu-installer/lanceur.cpp`) : Dear ImGui (sources compilées dans l'amorce, avec les
-modules `imgui_impl_sdl2` et `imgui_impl_sdlrenderer2` du même dépôt) sur la SDL2 déjà construite pour l'archive,
+modules `imgui_impl_sdl3` et `imgui_impl_sdlrenderer3` du même dépôt, présents dans 1.93.0) sur la SDL3 déjà construite pour l'archive,
 rendu 2D de SDL (sans Vulkan). Police : `Inter-Regular.ttf` et `Inter-SemiBold.ttf` de l'archive officielle,
 embarquées comme ressources de l'exécutable. Lecture des illustrations du joueur (`KeyArt.png`, `Background.png`)
 par WIC (Windows Imaging Component, composant de Windows, décodeur PNG présent depuis Windows XP) : aucune
-bibliothèque ajoutée, donc ni stb_image (dont les derniers envois datent de moins de deux semaines) ni SDL2_image
+bibliothèque ajoutée, donc ni stb_image (dont les derniers envois datent de moins de deux semaines) ni SDL3_image
 (absent du projet). Ces images ne sont jamais distribuées : elles sont lues dans la copie du jeu préparée chez le joueur.
+
+SDL3 sous Linux : la même archive `SDL3-3.4.20.tar.gz` (somme de `deps.lock`, aussi notée dans `tools.lock`) est
+compilée en statique dans le lanceur par `packaging/linux/build-paquet.sh` et livrée dans son archive ; chez le
+joueur, SDL3 du système si présente, sinon cette archive est compilée par le lanceur (somme revérifiée avant
+extraction) et le jeu y est lié en statique.
 
 ## Outils (`tools.lock`, commits épinglés)
 

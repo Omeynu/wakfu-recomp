@@ -1,6 +1,6 @@
-// Fenêtre SDL2 (présentation de l'image native, fermeture) et entrées de l'hôte (manette SDL, clavier).
+// Fenêtre SDL3 (présentation de l'image native, fermeture) et entrées de l'hôte (manette SDL, clavier).
 // Fenêtre et événements : thread du processeur de commandes ; présentation : fil natif. PadState : thread quelconque.
-// Sans SDL2, sans écran ou fenêtre non demandée : rien n'est ouvert, PadState reste au repos.
+// Sans SDL3, sans écran ou fenêtre non demandée : rien n'est ouvert, PadState reste au repos.
 #pragma once
 #include <cstdint>
 #include <map>
@@ -34,12 +34,15 @@ Pad PadState(int joueur = 0);
 bool PadPresent(int joueur);
 void Rumble(int joueur, uint16_t left, uint16_t right);   // vibrations (option [entrees] vibrations)
 // Correspondance SDL -> XINPUT (pad_map.cpp) : axes SDL (gauche X/Y, droite X/Y, gâchettes G/D),
-// boutons SDL (bit i = SDL_CONTROLLER_BUTTON i), état du clavier par scancode SDL (nul : pas de clavier).
+// boutons SDL (bit i = SDL_GamepadButton i, A B X Y par étiquette), état du clavier par scancode SDL (nul : pas de clavier).
 // zoneMorte (option [entrees] zone_morte, 0 à 0,5) : zone morte radiale des sticks de la manette, course restante
 // remise à l'échelle (0 : axes inchangés).
-Pad MapPad(const int16_t axes[6], uint32_t buttons, const uint8_t* keys, float zoneMorte = 0.0f);
+Pad MapPad(const int16_t axes[6], uint32_t buttons, const bool* keys, float zoneMorte = 0.0f);
 // Option [touches] : commande -> nom de touche SDL ; remplace les touches par défaut de la commande. Retourne le nombre
 // de commandes appliquées (touche inconnue : message, ignorée).
 int SetKeyBindings(const std::map<std::string, std::string>& bindings);
+// Option [manette] : bouton du jeu -> nom SDL du bouton physique (gâchettes : lefttrigger, righttrigger ; « aucun »).
+// Repart des boutons par défaut. Retourne le nombre de boutons appliqués (nom inconnu : message, ignoré).
+int SetPadBindings(const std::map<std::string, std::string>& bindings);
 
 }  // namespace wk::window

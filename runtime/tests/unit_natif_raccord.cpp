@@ -38,7 +38,10 @@ static bool Charger(const std::string& f, uint32_t at) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 3) { printf("usage : %s <conteneurs> <dossier SPIR-V>\n", argv[0]); return 2; }
+    if (argc != 3) {   // données du jeu (conteneurs de shaders, SPIR-V) : fournies par la batterie, absentes en lancement seul
+        printf("unit_natif_raccord : IGNORÉ (usage : %s <conteneurs> <dossier SPIR-V>)\n", argv[0]);
+        return 0;
+    }
     setenv("WAKFU_NATIF_SPIRV", argv[2], 1);
     wk::g_base = static_cast<uint8_t*>(wk::platform::ReserveGuestMemory(0x100000000ull));
     std::string err;

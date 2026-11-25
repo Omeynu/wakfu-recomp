@@ -11,9 +11,15 @@
 #include <thread>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <set>
 #include <string>
 #include <vector>
-#include "../process.h"
+#include "../config.h"
+#include "../processus.h"
+#ifdef WAKFU_HAS_SHADERGEN
+#include "../gpu/present.h"
+#endif
 #include "audio_out.h"
 #include "profile.h"
 #include "stub.h"
@@ -390,6 +396,7 @@ WK_IMPORT(XamContentGetLicenseMask) {
 WK_IMPORT(FscSetCacheElementCount) { WK_TRACE(FscSetCacheElementCount); Ret(ctx, 0); }
 
 // ---------- Messagerie XAM (XMsg) ----------
+namespace wk { extern std::string g_dataDir; }
 // Applications : 0xFA lecteur de musique, 0xFB XGI (présence, succès, sessions) -> succès hors ligne.
 namespace {
 void CompleteOverlapped(uint32_t ov, uint32_t result) {
@@ -416,8 +423,75 @@ void XmpReply(uint32_t message, uint32_t buf) {
         default: break;                                             // « Set… » : rien à rendre
     }
 }
+// Nom du succès `id` : ressource XDBF du titre (section XACH -> chaîne de la table de la langue du jeu, sinon de
+// l'anglais). Vide si absent. Lectures bornées à la ressource.
+std::string NomSucces(uint32_t id) {
+    bool found = false;
+    const uint32_t ri = XexHeaderField(0x000002FF, &found);
+    if (!found) return "";
+    for (uint32_t i = 0, n = (Ld32(ri) - 4) / 16; i < n && i < 64; i++) {
+        const uint32_t a = Ld32(ri + 4 + 16 * i + 8), fin = a + Ld32(ri + 4 + 16 * i + 12);
+        if (fin < a + 24 || Ld32(a) != 0x58444246) continue;   // « XDBF »
+        const uint32_t nEnt = Ld32(a + 8), nLibre = Ld32(a + 16), base = a + 24 + nEnt * 18 + nLibre * 8;
+        if (nEnt > 4096 || nLibre > 4096 || base > fin) continue;
+        auto bloc = [&](uint16_t section, uint64_t cle, uint32_t* p, uint32_t* t) {   // en-tête de 14 octets lisible
+            for (uint32_t k = 0; k < Ld32(a + 12) && k < nEnt; k++) {
+                const uint32_t e = a + 24 + k * 18;
+                if (Ld16(e) != section || Ld64(e + 2) != cle) continue;
+                *p = base + Ld32(e + 10), *t = Ld32(e + 14);
+                return *p >= base && *p <= fin && *t >= 14 && *t <= fin - *p;
+            }
+            return false;
+        };
+        uint32_t p, t;
+        if (!bloc(1, 0x58414348, &p, &t)) return "";   // « XACH » : 14 octets d'en-tête, entrées de 0x24 octets
+        uint16_t etiquette = 0;
+        for (uint32_t k = 0, nb = Ld16(p + 12); k < nb && 14 + (k + 1) * 0x24 <= t; k++)
+            if (Ld16(p + 14 + k * 0x24) == id) etiquette = Ld16(p + 14 + k * 0x24 + 2);
+        const int langue = config::LangueXbox(config::g.langue, config::LangueSysteme());
+        for (int l : {langue, 1}) {   // « XSTR » de la langue : 14 octets d'en-tête, puis {id, longueur, UTF-8}
+            if (!etiquette || !bloc(3, uint64_t(l), &p, &t)) continue;
+            for (uint32_t k = 0, nb = Ld16(p + 12), o = 14; k < nb && o + 4 <= t; k++) {
+                const uint16_t sid = Ld16(p + o), lg = Ld16(p + o + 2);
+                if (o + 4 + lg > t) break;
+                if (sid == etiquette) return std::string(reinterpret_cast<const char*>(g_base + p + o + 4), lg);
+                o += 4 + lg;
+            }
+        }
+        return "";
+    }
+    return "";
+}
+// Succès `id` débloqué par le jeu : journal et, option notifications_succes, « Succès débloqué : <nom> » 4 s ;
+// succès déjà notés dans <données>/succes.txt : journal seulement.
+void Succes(uint32_t id) {
+    static std::mutex m;
+    std::lock_guard<std::mutex> lock(m);
+    const std::string fichier = g_dataDir + "/succes.txt";
+    static std::set<uint32_t> vus = [&] {
+        std::set<uint32_t> s;
+        std::ifstream f(fichier);
+        for (uint32_t v; f >> v;) s.insert(v);
+        return s;
+    }();
+    const std::string nom = NomSucces(id);
+    if (!vus.insert(id).second) { fprintf(stderr, "[succes] %u « %s » : déjà débloqué\n", id, nom.c_str()); return; }
+    std::ofstream(fichier, std::ios::app) << id << "\n";
+    fprintf(stderr, "[succes] %u « %s » débloqué%s\n", id, nom.c_str(), config::g.notificationsSucces ? " (notification)" : "");
+#ifdef WAKFU_HAS_SHADERGEN
+    const bool fr = config::LangueXbox(config::g.langue, config::LangueSysteme()) == 4;
+    if (config::g.notificationsSucces)
+        gpu::AnnoncerSucces(std::string(fr ? "Succ\xc3\xa8s d\xc3\xa9" "bloqu\xc3\xa9" : "Achievement unlocked") +
+                            (nom.empty() ? "" : (fr ? " : " : ": ") + nom));
+#endif
+}
 uint32_t XMsgResult(uint32_t app, uint32_t message, uint32_t buf = 0) {
     if (app == 0xFA) { XmpReply(message, buf); return 0; }
+    static const char* essai = getenv("WAKFU_SUCCES_ESSAI");   // test : succès n° donné, au premier message XMsg
+    if (essai) Succes(uint32_t(atoi(essai))), essai = nullptr;
+    // XGI XUserWriteAchievements : tampon {nombre, XUSER_ACHIEVEMENT* {utilisateur, id}}
+    if (app == 0xFB && message == 0x000B0008 && buf)
+        for (uint32_t i = 0, nb = Ld32(buf), tab = Ld32(buf + 4); i < nb && i < 64 && tab; i++) Succes(Ld32(tab + 8 * i + 4));
     if (app == 0xFB) return 0;
     static std::mutex m;
     static std::vector<uint32_t> seen;

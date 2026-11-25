@@ -1,5 +1,5 @@
 #include "stub.h"
-#include "../process.h"
+#include "../processus.h"
 #include "sync.h"
 #include <cstdio>
 #include <cstdlib>

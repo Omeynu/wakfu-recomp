@@ -4,8 +4,10 @@ Islands of Wakfu recompilé — WakfuRecomp pour Linux
 2. Lancer :              WakfuRecomp/WakfuRecomp            (double-clic dans le gestionnaire de fichiers)
    La fenêtre guide les étapes : Jeu (paquet STFS du jeu, ou image ISO/XISO, ou dossier ; et la Title Update 2),
    Installation (préparation, recompilation et compilation : de quelques minutes à une heure), puis Jouer.
-   Composants manquants (clang, cmake, ninja, SDL2, Vulkan, glslang, FFmpeg) : bouton « Installer » sous
+   Composants manquants (clang, cmake, ninja, Vulkan, glslang, FFmpeg) : bouton « Installer » sous
    CachyOS / Arch (pacman, mot de passe administrateur demandé) ; autre distribution : la liste est affichée.
+   SDL3 absente du système : compilée à l'installation depuis l'archive officielle fournie (en-têtes de
+   développement X11 ou Wayland et du son nécessaires).
 3. Ensuite :             « WakfuRecomp » dans le menu des applications (créé au premier lancement).
 
 Dossier : ~/.local/share/wakfu-recomp (jeu, sauvegardes et réglages dans userdata, journaux).

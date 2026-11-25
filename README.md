@@ -6,7 +6,7 @@
 A static recompilation of **Islands of Wakfu** (Xbox Live Arcade, Xbox 360, title `584109AA`) to native PC code.
 The game's PowerPC code is translated to C++ with a patched [XenonRecomp](https://github.com/hedge-dev/XenonRecomp);
 its Direct3D calls are intercepted and rendered with Vulkan; the Xbox 360 kernel, audio (XMA) and input are
-reimplemented in a runtime (SDL2).
+reimplemented in a runtime (SDL3).
 
 **Why this project:** I have been a fan of the Wakfu series since I was young, and I wanted to play Islands of
 Wakfu natively on my PC instead of going through an emulator.
@@ -78,7 +78,7 @@ Settings, saves and logs are in `%APPDATA%\WakfuRecomp` (Windows) or `~/.local/s
 - Native rendering: Direct3D calls are translated to Vulkan (no GPU emulation); internal resolution up to 2160p,
   MSAA 2x/4x/8x, anisotropic filtering, graphics presets, optional AMD FSR 1 upscaling.
 - Game language: French, English, German, Spanish, Italian, Japanese (or the system language).
-- Local co-op for two players (up to 4 controllers or keyboard); controllers through SDL2 (hot-plug, rumble) and a
+- Local co-op for two players (up to 4 controllers or keyboard); controllers through SDL3 (hot-plug, rumble) and a
   remappable keyboard.
 - Windowed, borderless and fullscreen modes; GPU selection; frame rate counter; skippable intro logos.
   All settings in `config.toml` or the launcher window ([`docs/options.md`](docs/options.md), French).
@@ -118,7 +118,7 @@ See [`BUILDING.md`](BUILDING.md).
   PowerPC and Xenos shader recompilers.
 - [Xenia](https://github.com/xenia-project/xenia) — texture layout code adapted in `runtime/third_party/xenia`.
 - [UnleashedRecomp](https://github.com/hedge-dev/UnleashedRecomp) — architecture reference.
-- AMD FidelityFX FSR 1, SDL2, FFmpeg (XMA2 decoder only), glslang, DirectXShaderCompiler, Dear ImGui, toml++, zstd,
+- AMD FidelityFX FSR 1, SDL3, FFmpeg (XMA2 decoder only), glslang, DirectXShaderCompiler, Dear ImGui, toml++, zstd,
   llvm-mingw — see [`packaging/windows/LICENCES-TIERS.txt`](packaging/windows/LICENCES-TIERS.txt).
 
 ## License

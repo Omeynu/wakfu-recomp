@@ -1,11 +1,11 @@
 #!/bin/bash
-# Construit WakfuRecomp-linux.tar.zst : dossier WakfuRecomp avec le lanceur WakfuRecomp (fenêtre Dear ImGui/SDL2, même
+# Construit WakfuRecomp-linux.tar.zst : dossier WakfuRecomp avec le lanceur WakfuRecomp (fenêtre Dear ImGui/SDL3, même
 # programme que WakfuRecomp.exe) et LISEZMOI.txt. Archive zstd ajoutée à la fin du lanceur (packaging/windows/pack.py) :
 # sources (runtime, wakfu-prepare, XenonRecomp patché, XenosRecomp) + DXC officiel (binaire Microsoft, shaders natifs).
 # AUCUN fichier du jeu ni C++ recompilé : tout ce qui vient du jeu est produit chez l'utilisateur (lanceur).
 # Usage : packaging/linux/build-paquet.sh <dossier de sortie>
-#   Hôte : git, tar, zstd, curl, python3, clang, cmake, ninja, SDL2 et zlib (en-têtes), réseau (clones de XenonRecomp /
-#   XenosRecomp et DXC aux versions de tools.lock ; zstd, Dear ImGui, Inter aux versions de packaging/windows/deps.lock).
+#   Hôte : git, tar, zstd, curl, python3, clang, cmake, ninja, zlib, en-têtes de développement X11/Wayland et son (construction de SDL3), réseau (clones de XenonRecomp /
+#   XenosRecomp et DXC aux versions de tools.lock ; zstd, Dear ImGui, Inter, SDL3 aux versions de packaging/windows/deps.lock).
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 OUT=$(realpath -m "${1:?usage : build-paquet.sh <dossier de sortie>}")
@@ -54,8 +54,23 @@ tar -xzf "$DXC_TGZ" -C "$ST/natif/dxc" --exclude=lib/libdxil.so --exclude="bin/d
 # Sources du dépôt : fichiers suivis par Git seulement
 (cd "$REPO" && git ls-files -z runtime check config tools-src/wakfu-prepare tools-src/xexdump packaging/shaders | xargs -0 cp --parents -t "$ST/src")
 
-# Lanceur : zstd statique, Dear ImGui et police Inter (sources), SDL2 et zlib du système
-for f in zstd-1.5.7.tar.gz imgui-1.93.0.tar.gz Inter-4.1.zip; do fetch "$f"; done
+# Lanceur : zstd et SDL3 statiques (lanceur lancé sans SDL3 système), Dear ImGui et police Inter (sources), zlib du système.
+# L'archive SDL3 est aussi dans le paquet : le lanceur la compile chez le joueur dont le système n'a pas SDL3.
+SDL3_TGZ=SDL3-3.4.20.tar.gz
+for f in zstd-1.5.7.tar.gz imgui-1.93.0.tar.gz Inter-4.1.zip $SDL3_TGZ; do fetch "$f"; done
+grep -qF "$(awk -v f=$SDL3_TGZ '$1 == f {print $2}' "$REPO/packaging/windows/deps.lock")" "$REPO/tools-src/wakfu-installer/main.cpp" ||
+    { echo "somme SDL3 de main.cpp différente de deps.lock" >&2; exit 1; }
+mkdir -p "$ST/deps"; cp "$DL/$SDL3_TGZ" "$ST/deps/"
+if [ ! -f "$BLD/.fait-sdl3-3.4.20" ]; then
+    rm -rf "$BLD/sdl3-src" "$BLD/sdl3-bld" "$BLD/sdl3"; mkdir -p "$BLD/sdl3-src"
+    tar -xf "$DL/$SDL3_TGZ" -C "$BLD/sdl3-src" --strip-components=1
+    # mêmes options que la construction chez le joueur (tools-src/wakfu-installer/main.cpp, construireSdl3)
+    cmake -S "$BLD/sdl3-src" -B "$BLD/sdl3-bld" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_INSTALL_PREFIX="$BLD/sdl3" -DSDL_SHARED=OFF -DSDL_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DSDL_TESTS=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_EXAMPLES=OFF -DSDL_X11_XTEST=OFF > "$BLD/sdl3.log"
+    ninja -C "$BLD/sdl3-bld" install >> "$BLD/sdl3.log"
+    touch "$BLD/.fait-sdl3-3.4.20"
+fi
 if [ ! -f "$BLD/.fait-zstd-1.5.7" ]; then
     rm -rf "$BLD/zstd-src" "$BLD/zstd"; mkdir -p "$BLD/zstd-src"
     tar -xf "$DL/zstd-1.5.7.tar.gz" -C "$BLD/zstd-src" --strip-components=1
@@ -73,12 +88,12 @@ if [ ! -f "$BLD/.fait-imgui-inter" ]; then
 fi
 propre "$REPO/tools-src/wakfu-installer" "$BLD/stub"
 cmake -S "$REPO/tools-src/wakfu-installer" -B "$BLD/stub" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
-    -Dzstd_DIR="$BLD/zstd/lib/cmake/zstd" -DIMGUI_DIR="$BLD/imgui" -DINTER_DIR="$BLD/inter/extras/ttf" -DXENONRECOMP_DIR="$XR" > "$BLD/stub.log"
+    -Dzstd_DIR="$BLD/zstd/lib/cmake/zstd" -DSDL3_DIR="$BLD/sdl3/lib/cmake/SDL3" -DIMGUI_DIR="$BLD/imgui" -DINTER_DIR="$BLD/inter/extras/ttf" -DXENONRECOMP_DIR="$XR" > "$BLD/stub.log"
 ninja -C "$BLD/stub" >> "$BLD/stub.log"
 "$BLD/stub/test_suppression" "$(mktemp -d -p "$BLD")"
 "$BLD/stub/test_migration" "$(mktemp -d -p "$BLD")"
 "$BLD/stub/test_secours" "$(mktemp -d -p "$BLD")"
-for l in "$BLD/imgui/LICENSE.txt:imgui" "$BLD/inter/LICENSE.txt:Inter-OFL-1.1" "$BLD/zstd-src/LICENSE:zstd"; do
+for l in "$BLD/imgui/LICENSE.txt:imgui" "$BLD/inter/LICENSE.txt:Inter-OFL-1.1" "$BLD/zstd-src/LICENSE:zstd" "$BLD/sdl3-src/LICENSE.txt:SDL3"; do
     mkdir -p "$ST/licences"; cp "${l%%:*}" "$ST/licences/${l##*:}.txt"
 done
 

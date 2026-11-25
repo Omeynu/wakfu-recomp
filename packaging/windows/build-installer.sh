@@ -1,7 +1,7 @@
 #!/bin/bash
 # Construit WakfuRecomp.exe : lanceur et installateur Windows x64 en un seul fichier (amorce + archive zstd ajoutée à la fin).
 # L'archive contient la chaîne de compilation (llvm-mingw, CMake, ninja), XenonRecomp.exe (patché),
-# wakfu-prepare.exe, XenosRecomp.exe + DXC officiel (shaders natifs), les sources du runtime et les bibliothèques précompilées (glslang, SDL2, FFmpeg minimal,
+# wakfu-prepare.exe, XenosRecomp.exe + DXC officiel (shaders natifs), les sources du runtime et les bibliothèques précompilées (glslang, SDL3, FFmpeg minimal,
 # en-têtes Vulkan). AUCUN fichier du jeu ni C++ recompilé : tout ce qui vient du jeu est produit chez l'utilisateur.
 #
 # Usage : packaging/windows/build-installer.sh <dossier_de_construction> [<dossier jeu préparé, pour test>]
@@ -65,12 +65,12 @@ if todo glslang; then
     run glslang.log ninja -C "$BLD/glslang" install
     fait glslang
 fi
-if todo sdl2; then
-    unpack SDL2-2.32.10.tar.gz "$SRC/SDL2"
-    run sdl2.log cmake -S "$SRC/SDL2" -B "$BLD/sdl2" "${CROSS[@]}" -DCMAKE_INSTALL_PREFIX="$DEPS/SDL2" \
-        -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF
-    run sdl2.log ninja -C "$BLD/sdl2" install
-    fait sdl2
+if todo sdl3-3.4.20; then
+    unpack SDL3-3.4.20.tar.gz "$SRC/SDL3"
+    run sdl3.log cmake -S "$SRC/SDL3" -B "$BLD/sdl3" "${CROSS[@]}" -DCMAKE_INSTALL_PREFIX="$DEPS/SDL3" \
+        -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+    run sdl3.log ninja -C "$BLD/sdl3" install
+    fait sdl3-3.4.20
 fi
 if todo zstd; then   # pour l'amorce seulement (décompression de l'archive)
     unpack zstd-1.5.7.tar.gz "$SRC/zstd"
@@ -137,13 +137,13 @@ fi
 propre "$REPO/packaging/shaders/xenosrecomp" "$BLD/xenos"
 run xenos.log cmake -S "$REPO/packaging/shaders/xenosrecomp" -B "$BLD/xenos" "${CROSS[@]}" -DXENOSRECOMP_DIR="$XS" -DDXC_DIR="$DXW"
 run xenos.log ninja -C "$BLD/xenos" XenosRecomp xr_hash
-# Fenêtre du lanceur (amorce) : Dear ImGui (sources) et police Inter (Regular, SemiBold), avec SDL2 et zstd ci-dessus
+# Fenêtre du lanceur (amorce) : Dear ImGui (sources) et police Inter (Regular, SemiBold), avec SDL3 et zstd ci-dessus
 if todo imgui-1.93.0; then unpack imgui-1.93.0.tar.gz "$SRC/imgui"; fait imgui-1.93.0; fi
 if todo inter-4.1; then unpack Inter-4.1.zip "$SRC/inter"; fait inter-4.1; fi
 # Amorce de l'installateur
 propre "$REPO/tools-src/wakfu-installer" "$BLD/stub"
 run stub.log cmake -S "$REPO/tools-src/wakfu-installer" -B "$BLD/stub" "${CROSS[@]}" -Dzstd_DIR="$DEPS/zstd/lib/cmake/zstd" \
-    -DSDL2_DIR="$DEPS/SDL2/lib/cmake/SDL2" -DVULKAN_INCLUDE_DIR="$DEPS/vulkan/include" -DIMGUI_DIR="$SRC/imgui" -DINTER_DIR="$SRC/inter/extras/ttf" -DXENONRECOMP_DIR="$XR"
+    -DSDL3_DIR="$DEPS/SDL3/lib/cmake/SDL3" -DVULKAN_INCLUDE_DIR="$DEPS/vulkan/include" -DIMGUI_DIR="$SRC/imgui" -DINTER_DIR="$SRC/inter/extras/ttf" -DXENONRECOMP_DIR="$XR"
 run stub.log ninja -C "$BLD/stub"
 if [ -n "$GAME" ]; then   # gen_imports C++ (amorce) identique au script Python de référence
     propre "$REPO/tools-src/wakfu-installer" "$BLD/stub-linux"
@@ -191,8 +191,8 @@ mkdir -p "$STAGE/natif"
 cp "$BLD/xenos/XenosRecomp/XenosRecomp.exe" "$BLD/xenos/xr_hash.exe" "$XS/XenosRecomp/shader_common.h" "$DXW"/bin/x64/{dxc.exe,dxcompiler.dll} "$STAGE/natif/"   # pas dxil.dll (signature DXIL, licence Microsoft) : SPIR-V seulement
 # Bibliothèques précompilées
 mkdir -p "$STAGE/deps"
-cp -r "$DEPS"/{glslang,SDL2,ffmpeg,vulkan} "$STAGE/deps/"
-rm -rf "$STAGE/deps/SDL2/share" "$STAGE/deps/ffmpeg/share"
+cp -r "$DEPS"/{glslang,SDL3,ffmpeg,vulkan} "$STAGE/deps/"
+rm -rf "$STAGE/deps/SDL3/share" "$STAGE/deps/ffmpeg/share"
 # Sources du runtime (fichiers suivis par Git seulement : jamais de C++ généré ni de fichier du jeu)
 (cd "$REPO" && git ls-files -z runtime check config | xargs -0 cp --parents -t "$STAGE/src")
 # Licences tierces
@@ -204,7 +204,7 @@ cp "$XR/thirdparty/xxHash/LICENSE" "$STAGE/licences/xxHash.txt"
 cp "$XR/thirdparty/libmspack/libmspack/COPYING.LIB" "$STAGE/licences/libmspack-LGPL-2.1.txt"
 cp "$XR/thirdparty/tiny-AES-c/unlicense.txt" "$STAGE/licences/tiny-AES-c.txt"
 sed -n '1,/\*\//p' "$XR/thirdparty/TinySHA1/TinySHA1.hpp" > "$STAGE/licences/TinySHA1.txt"
-cp "$SRC/SDL2/LICENSE.txt" "$STAGE/licences/SDL2.txt"
+cp "$SRC/SDL3/LICENSE.txt" "$STAGE/licences/SDL3.txt"
 cp "$SRC/zstd/LICENSE" "$STAGE/licences/zstd.txt"
 cp "$SRC/imgui/LICENSE.txt" "$STAGE/licences/imgui.txt"
 cp "$SRC/inter/LICENSE.txt" "$STAGE/licences/Inter-OFL-1.1.txt"

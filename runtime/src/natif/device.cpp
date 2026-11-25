@@ -23,6 +23,7 @@
 #include <vector>
 #include "config.h"
 #include "kernel/window.h"
+#include "gpu/present.h"
 #include "gpu/vk.h"
 #include "guest.h"
 #include "natif/etats.h"
@@ -210,7 +211,7 @@ struct Natif {
     // Mesures : horodatages début/fin de chaque lot (2 par emplacement), cumuls sur 60 images
     VkQueryPool temps = VK_NULL_HANDLE;
     bool mesure[2]{};
-    double gpuMs = 0;
+    double gpuMs = 0, gpuTotal = 0;   // gpuTotal : jamais remis à zéro (option afficher_perfs)
     uint32_t lots = 0;
     double cpu0 = 0;   // ms (platform::ThreadCpuMs)
     double attenteGpuMs = 0, presentMs = 0;   // durées réelles (fences GPU ; présentation : acquire, envoi, fence)
@@ -229,6 +230,7 @@ Natif n;
 constexpr uint32_t kProfMax = 4096;   // horodatages par lot
 int g_profDetail = 0;   // WAKFU_PROFIL_GPU : 1 noms détaillés, 2 en plus un horodatage par draw
 uint32_t g_msaa = 4;    // [video] multi_echantillonnage : échantillons retenus pour ce GPU, 0 = désactivé (Initialiser)
+bool g_a2c = false;     // [video] anticrenelage_transparence : alpha-to-coverage des draws à test alpha en MSAA
 
 // Image mesurée : sans WAKFU_PROFIL_GPU, 10 images sur 60 seulement (horodatages ≈ 3 % du GPU). Un lot ne couvre
 // qu'une image (soumis à l'échange).
@@ -269,7 +271,7 @@ VkCommandBuffer Cmd() {
         uint64_t ts[2];
         if (n.mesure[n.slot] && vkGetQueryPoolResults(n.vk->device, n.temps, q, 2, sizeof ts, ts, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS &&
             ts[1] != ts[0])
-            n.gpuMs += Ecart(ts[0], ts[1]);
+            n.gpuMs += Ecart(ts[0], ts[1]), n.gpuTotal += Ecart(ts[0], ts[1]);
         n.mesure[n.slot] = false;
         if (n.prof && n.profNoms[n.slot].size() > 1) {
             auto& noms = n.profNoms[n.slot];
@@ -698,7 +700,8 @@ VkPipeline Pipeline(const Instantane& d, VkPrimitiveTopology topo, const Shaders
     rs.lineWidth = 1.0f;
     VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     ms.rasterizationSamples = ech;
-    ms.alphaToCoverageEnable = e.alphaVersCouverture;
+    // test alpha (discard dans le PS) gardé : la couverture adoucit le bord découpé (feuillage, grilles)
+    ms.alphaToCoverageEnable = e.alphaVersCouverture || (g_a2c && e.testAlpha && ech != VK_SAMPLE_COUNT_1_BIT);
     VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     cb.attachmentCount = nb;
     cb.pAttachments = e.blend;
@@ -945,6 +948,23 @@ void FaireEchange(const Commande& c) {
         }
         n.lots = 0;
     }
+    if (config::g.afficherPerfs) {   // en haut à droite, 2 fois par seconde : img/s, GPU et CPU du fil natif par image
+        static Horloge::time_point t0 = Horloge::now();
+        static uint32_t i0 = n.image;
+        static double g0 = n.gpuTotal, c0 = platform::ThreadCpuMs();
+        const double s = std::chrono::duration<double>(Horloge::now() - t0).count();
+        if (s >= 0.5) {
+            const double im = std::max(1u, n.image - i0), c = platform::ThreadCpuMs();
+            const bool fr = config::LangueXbox(config::g.langue, config::LangueSysteme()) == 4;
+            char b[96];
+            snprintf(b, sizeof b, "%.1f %s  GPU %.2f ms  CPU %.2f ms", (n.image - i0) / s, fr ? "img/s" : "fps",
+                     (n.gpuTotal - g0) / im, (c - c0) / im);
+            std::string t = b;
+            if (fr) std::replace(t.begin(), t.end(), '.', ',');
+            gpu::AfficherPerfs(t);
+            t0 = Horloge::now(), i0 = n.image, g0 = n.gpuTotal, c0 = c;
+        }
+    }
     n.stats = Stats{};
     n.image++;
     n.chrono = n.image % 60 >= 50;
@@ -983,11 +1003,13 @@ bool Initialiser() {
     while (g_msaa > 1 && !(n.vk->sampleCounts & g_msaa)) g_msaa /= 2;   // plafond du GPU
     if (g_msaa == 1) g_msaa = 0;
     n.echelle = uint32_t(std::clamp(config::g.renderScale, 1, 4));
+    g_a2c = config::g.anticrenelageTransparence;
     n.ombres = config::g.ombres == "x4" ? 4 : config::g.ombres == "x2" ? 2 : 1;
-    fprintf(stderr, "[natif] rendu natif sur %s (type %d) ; profondeur %s ; multi-échantillonnage x%u (%s ; GPU : 0x%X) ; définition interne x%u ; ombres x%u ; anisotrope x%g (GPU : x%g)\n",
+    fprintf(stderr, "[natif] rendu natif sur %s (type %d) ; profondeur %s ; multi-échantillonnage x%u (%s ; GPU : 0x%X) ; définition interne x%u ; ombres x%u ; anisotrope x%g (GPU : x%g) ; transparence anticrénelée %s\n",
             n.vk->deviceName.c_str(), n.vk->deviceType, n.d24s8 == VK_FORMAT_D24_UNORM_S8_UINT ? "D24S8" : "D32S8",
             g_msaa, config::g.msaa.c_str(), n.vk->sampleCounts, n.echelle, n.ombres,
-            config::g.anisotropy > 1 ? std::min(float(config::g.anisotropy), n.vk->maxAnisotropy) : 1.0f, n.vk->maxAnisotropy);
+            config::g.anisotropy > 1 ? std::min(float(config::g.anisotropy), n.vk->maxAnisotropy) : 1.0f, n.vk->maxAnisotropy,
+            g_a2c ? (g_msaa ? "oui" : "non (MSAA désactivé)") : "non");
     return true;
 }
 

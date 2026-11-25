@@ -17,8 +17,10 @@ Dans l'ordre prévu. Une option nouvelle reste désactivée par défaut tant qu'
 4. *Fait (v0.1.4)* : **vérifications dans le jeu** : la coopération locale ne marchait pas (joueur 2 jamais connecté),
    réparée avec l'attribution des joueurs ; une seule langue de voix ; pas de flou de mouvement ni de profondeur de
    champ à désactiver ; le jeu ne produit que de la stéréo (détail dans `docs/options.md`, « Vérifié dans le jeu »).
-5. **Options longues** : remappage de la manette, affichage des performances en jeu, notifications de succès,
-   anticrénelage de la transparence, icônes de manette Xbox/PlayStation, filtre pour daltoniens.
+5. *Fait (v0.1.6)* : **options longues** : remappage de la manette (`[manette]`, onglet Manette, `bindings` de
+   RecompLauncher), affichage des performances en jeu, notifications de succès, anticrénelage de la transparence
+   (presque sans effet ici : les feuillages ne passent pas par le MSAA), icônes de manette PlayStation (dessinées par
+   le projet ; dessin de la manette, sticks et croix directionnelle restent Xbox), filtre pour daltoniens.
 6. **Fin de projet** : son surround 5.1/7.1, **plus de 60 images/s** (essai seulement : mesurer, abandonner si la
    logique du jeu dépend de la cadence). Pas de mods : aucun n'existe pour ce jeu (recherche du 23/11/2026).
 7. **RecompLauncher**, le reste (Windows d'abord ; Linux suit sans bloquer) (doc développeur et schéma de recomplauncher.com, relus le 23/11/2026) :
@@ -60,5 +62,5 @@ Dans l'ordre prévu. Une option nouvelle reste désactivée par défaut tant qu'
    - *À vérifier avant publication* (liste à suivre par le développeur sous Windows, publication une fois tout
      vert) : la reconnaissance du paquet XBLA (`ids` 584109AA, laissé
      de côté pour l'instant), `{input:update}` sans `into`, et les clés TOML `section/clé`.
-   - *SDL3* : passage de SDL2 à SDL3 (conseillé par la doc), juste avant le point 5, après la vérification de la
-     coopération à deux manettes (point 4).
+   - *Fait (v0.1.6)* : *SDL3* : passage de SDL2 à SDL3 (3.4.20) pour le jeu et le lanceur ; sous Linux, le
+     lanceur compile SDL3 lui-même si la distribution ne la fournit pas.

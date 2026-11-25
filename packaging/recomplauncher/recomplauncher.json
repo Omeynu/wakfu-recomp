@@ -203,6 +203,60 @@
       "defaults": { "entrees/vibrations": "true" }
     },
     {
+      "id": "button_icons",
+      "group": "Sound and comfort",
+      "label": "Button icons",
+      "help": "Auto follows player 1's controller. PlayStation icons are drawn by the game's runtime.",
+      "choices": [
+        { "label": "Auto", "set": { "entrees/icones": "\"auto\"" } },
+        { "label": "Xbox", "set": { "entrees/icones": "\"xbox\"" } },
+        { "label": "PlayStation", "set": { "entrees/icones": "\"playstation\"" } }
+      ],
+      "defaults": { "entrees/icones": "\"auto\"" }
+    },
+    {
+      "id": "controller_buttons",
+      "group": "Sound and comfort",
+      "label": "Controller buttons",
+      "help": "Which controller button does each of the game's buttons. One button can do several. Keyboard keys are ignored here.",
+      "bindings": {
+        "max": 1,
+        "actions": [
+          { "label": "A button", "key": "manette/a", "pad": true },
+          { "label": "B button", "key": "manette/b", "pad": true },
+          { "label": "X button", "key": "manette/x", "pad": true },
+          { "label": "Y button", "key": "manette/y", "pad": true },
+          { "label": "LB", "key": "manette/lb", "pad": true },
+          { "label": "RB", "key": "manette/rb", "pad": true },
+          { "label": "LT", "key": "manette/lt", "pad": true },
+          { "label": "RT", "key": "manette/rt", "pad": true },
+          { "label": "Back", "key": "manette/back", "pad": true },
+          { "label": "Start", "key": "manette/start", "pad": true },
+          { "label": "Left stick click", "key": "manette/ls", "pad": true },
+          { "label": "Right stick click", "key": "manette/rs", "pad": true },
+          { "label": "D-pad up", "key": "manette/haut", "pad": true },
+          { "label": "D-pad down", "key": "manette/bas", "pad": true },
+          { "label": "D-pad left", "key": "manette/gauche", "pad": true },
+          { "label": "D-pad right", "key": "manette/droite", "pad": true }
+        ],
+        "names": {
+          "A": "a", "Cross": "a", "B": "b", "Circle": "b",
+          "X": "x", "Square": "x", "Y": "y", "Triangle": "y",
+          "LB": "leftshoulder", "L1": "leftshoulder", "RB": "rightshoulder", "R1": "rightshoulder",
+          "LT": "lefttrigger", "L2": "lefttrigger", "RT": "righttrigger", "R2": "righttrigger",
+          "LS": "leftstick", "L3": "leftstick", "RS": "rightstick", "R3": "rightstick",
+          "Back": "back", "Share": "back", "Start": "start", "Options": "start",
+          "D-Pad Up": "dpup", "D-Pad Down": "dpdown", "D-Pad Left": "dpleft", "D-Pad Right": "dpright"
+        }
+      },
+      "defaults": {
+        "manette/a": "a", "manette/b": "b", "manette/x": "x", "manette/y": "y",
+        "manette/lb": "leftshoulder", "manette/rb": "rightshoulder", "manette/lt": "lefttrigger", "manette/rt": "righttrigger",
+        "manette/back": "back", "manette/start": "start", "manette/ls": "leftstick", "manette/rs": "rightstick",
+        "manette/haut": "dpup", "manette/bas": "dpdown", "manette/gauche": "dpleft", "manette/droite": "dpright"
+      }
+    },
+    {
       "id": "background_input",
       "group": "Advanced",
       "label": "Controller in background",

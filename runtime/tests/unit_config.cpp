@@ -40,6 +40,10 @@ int main() {
         Expect("msaa auto", MsaaEchantillons("auto", type) == (type == 2 ? 4 : 0));
         Expect("msaa niveaux", MsaaEchantillons("2x", type) == 2 && MsaaEchantillons("4x", type) == 4 && MsaaEchantillons("8x", type) == 8);
     }
+    {
+        std::vector<std::string> e;
+        Expect("msaa active lu comme 4x", Parse("[video]\nmulti_echantillonnage = \"active\"\n", &e).msaa == "4x" && e.empty());
+    }
     Expect("msaa niveau lu", Parse("[video]\nmulti_echantillonnage = \"8x\"\n", &err).msaa == "8x" && err.empty());
     for (const char* v : {"\"16x\"", "\"x4\"", "4"})
         Expect("msaa niveau invalide", Parse(std::string("[video]\nmulti_echantillonnage = ") + v + "\n", &err).msaa == "auto");
@@ -73,6 +77,22 @@ int main() {
     err.clear();
     Config kr = Parse(Serialize(k), &err);
     Expect("touches aller-retour", kr.keys == k.keys && kr.console && err.empty());
+    // [manette] : bouton du jeu inconnu, bouton physique inconnu ou non-chaîne refusés ; doublons acceptés ; aller-retour
+    err.clear();
+    Config m = Parse("[manette]\na = \"b\"\nb = \"b\"\nlt = \"aucun\"\nrs = \"paddle1\"\nvoler = \"a\"\nx = \"croix\"\ny = 2\n", &err);
+    Expect("manette lue", m.pad.size() == 4 && m.pad["a"] == "b" && m.pad["b"] == "b" && m.pad["lt"] == "aucun" && m.pad["rs"] == "paddle1");
+    Expect("manette invalide : 3 messages", err.size() == 3);
+    err.clear();
+    Expect("manette aller-retour", Parse(Serialize(m), &err).pad == m.pad && err.empty());
+    Expect("manette \"\" = aucun", Parse("[manette]\nstart = \"\"\n", &err).pad["start"] == "aucun" && err.empty());
+    Expect("manette vide par défaut", Config{}.pad.empty() && Parse(Serialize(Config{}), &err).pad.empty() && err.empty());
+    // [entrees] icones : auto par défaut, valeur inconnue refusée, aller-retour
+    err.clear();
+    Expect("icones auto par défaut", Config{}.icones == "auto");
+    Expect("icones playstation", Parse("[entrees]\nicones = \"playstation\"\n", &err).icones == "playstation" && err.empty());
+    Expect("icones inconnue refusée", Parse("[entrees]\nicones = \"sony\"\n", &err).icones == "auto" && err.size() == 1);
+    err.clear();
+    Expect("icones aller-retour", Parse(Serialize(Parse("[entrees]\nicones = \"xbox\"\n", &err)), &err).icones == "xbox" && err.empty());
     // Aller-retour complet, comme le lanceur (tools-src/wakfu-installer/lanceur.cpp : Serialize puis relecture par le
     // runtime) : toutes les clés changées, touche « \ » (Backslash) et guillemet dans le nom du GPU échappés.
     err.clear();
@@ -183,6 +203,44 @@ int main() {
     err.clear();
     t.captureKey = "F9";
     Expect("touche_capture aller-retour", Parse(Serialize(t), &err).captureKey == "F9" && err.empty());
+    // Affichage des performances : booléen, défaut false
+    err.clear();
+    Expect("afficher_perfs défaut", !d.afficherPerfs);
+    Expect("afficher_perfs lu", Parse("[confort]\nafficher_perfs = true\n", &err).afficherPerfs && err.empty());
+    Expect("afficher_perfs invalide", !Parse("[confort]\nafficher_perfs = \"oui\"\n", &err).afficherPerfs && err.size() == 1 &&
+                                      err[0] == "[confort] afficher_perfs : valeur invalide, défaut gardé");
+    err.clear();
+    t.afficherPerfs = true;
+    Expect("afficher_perfs aller-retour", Parse(Serialize(t), &err).afficherPerfs && err.empty());
+    // Notifications de succès : booléen, défaut true
+    err.clear();
+    Expect("notifications_succes défaut", d.notificationsSucces);
+    Expect("notifications_succes lu", !Parse("[confort]\nnotifications_succes = false\n", &err).notificationsSucces && err.empty());
+    Expect("notifications_succes invalide", Parse("[confort]\nnotifications_succes = 0\n", &err).notificationsSucces && err.size() == 1 &&
+                                           err[0] == "[confort] notifications_succes : valeur invalide, défaut gardé");
+    err.clear();
+    t.notificationsSucces = false;
+    Expect("notifications_succes aller-retour", !Parse(Serialize(t), &err).notificationsSucces && err.empty());
+    // Anticrénelage de la transparence : booléen, défaut false
+    err.clear();
+    Expect("anticrenelage_transparence défaut", !d.anticrenelageTransparence);
+    Expect("anticrenelage_transparence lu", Parse("[video]\nanticrenelage_transparence = true\n", &err).anticrenelageTransparence && err.empty());
+    Expect("anticrenelage_transparence invalide", !Parse("[video]\nanticrenelage_transparence = \"4x\"\n", &err).anticrenelageTransparence &&
+                                                  err.size() == 1 && err[0] == "[video] anticrenelage_transparence : valeur invalide, défaut gardé");
+    err.clear();
+    t.anticrenelageTransparence = true;
+    Expect("anticrenelage_transparence aller-retour", Parse(Serialize(t), &err).anticrenelageTransparence && err.empty());
+    // Filtre pour daltoniens : aucun (défaut) | protanopie | deuteranopie | tritanopie
+    err.clear();
+    Expect("daltonisme défaut", d.daltonisme == "aucun");
+    for (const char* v : {"protanopie", "deuteranopie", "tritanopie", "aucun"})
+        Expect("daltonisme lu", Parse(std::string("[post]\ndaltonisme = \"") + v + "\"\n", &err).daltonisme == v && err.empty());
+    for (const char* v : {"\"Protanopie\"", "\"deuteranomalie\"", "1", "\"\""})
+        Expect("daltonisme invalide", Parse(std::string("[post]\ndaltonisme = ") + v + "\n", &err).daltonisme == "aucun");
+    Expect("daltonisme invalide : 4 messages", err.size() == 4 && err[0] == "[post] daltonisme : valeur invalide, défaut gardé");
+    err.clear();
+    t.daltonisme = "tritanopie";
+    Expect("daltonisme aller-retour", Parse(Serialize(t), &err).daltonisme == "tritanopie" && err.empty());
     // Écran et position de la fenêtre : défaut écran 0, centrée (position absente)
     err.clear();
     Expect("écran défaut", d.screen == 0 && !d.posX && !d.posY);
@@ -207,6 +265,10 @@ int main() {
         Config attendu = t;
         attendu.screen = 1, attendu.posX = 40, attendu.posY = 50, attendu.width = 1600, attendu.height = 900;
         Expect("SaveWindow : fenêtre changée, reste gardé", err.empty() && Serialize(w) == Serialize(attendu));
+        // Wayland : position inconnue, celle du fichier gardée
+        Expect("SaveWindow sans position", SaveWindow(dir.string(), 0, std::nullopt, std::nullopt, 1280, 720));
+        w = Parse(lire(), &err);
+        Expect("SaveWindow sans position : 40,50 gardé", err.empty() && w.posX == 40 && w.posY == 50 && w.width == 1280 && w.screen == 0);
         std::ofstream(dir / "config.toml") << "[video\nlargeur = ";
         Expect("SaveWindow : illisible refusé", !SaveWindow(dir.string(), 0, 1, 1, 800, 600) && lire() == "[video\nlargeur = ");
         std::ofstream(dir / "config.toml") << "[video]\nvsync = 3\n";

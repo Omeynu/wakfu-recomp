@@ -14,6 +14,7 @@
 #include "guest.h"
 #include "natif/device.h"
 #include "natif/interfaces.h"
+#include "natif/icones.h"
 #include "natif/tampons.h"
 
 namespace wk::natif {
@@ -377,6 +378,7 @@ bool Envoyer(Context* vk, const Disposition& d, Entree& e) {
     const ::natif::Buffer src = ::natif::RingUpload(total, &dst);
     if (!dst) { g_s.anneauPlein++; return false; }
     for (uint32_t l = 0; l < d.niveaux; l++) Convertir(d, l, dst + debut[l]);
+    RemplacerIcone(d, dst, debut);   // option [entrees] icones
     const bool neuve = !e.image;
     if (neuve && !CreerImage(vk, d, d.n[0].w, d.n[0].h, &e)) { g_s.echecs++; return false; }
     VkCommandBuffer cmd = CmdEnvoi();
